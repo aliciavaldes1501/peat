@@ -1,0 +1,54 @@
+---
+title: Analyses of species distributions in peatlands
+author: "Alicia Valdés"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: '4'
+    df_print: paged
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+options(tibble.width = Inf)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r load packages, include=FALSE}
+library(tidyverse)
+library(readxl)
+library(knitr)
+```
+
+# Data preparation
+
+## Read data from Excel files
+
+Data from mothers and fathers from the greenhouse data file
+
+```{r}
+data_mothers_fathers<-read_excel("C:/Users/avald/Dropbox/SU/Projects/cerastium_greenhouse/data/edited/Cerastium_greenhouse_spring_2022_editedAV.xlsx", 
+                       sheet="extracted_data_mothers_fathers")
+```
+
+
+
+# Session info
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
