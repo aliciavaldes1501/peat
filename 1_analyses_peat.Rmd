@@ -3,13 +3,13 @@ title: Analyses of species distributions in peatlands
 author: "Alicia Valdés"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
+  pdf_document:
+    toc: yes
+    toc_depth: 4
   html_document:
     toc: yes
     toc_depth: '4'
     df_print: paged
-  pdf_document:
-    toc: yes
-    toc_depth: 4
 editor_options:
   chunk_output_type: inline
 ---
@@ -19,26 +19,919 @@ options(tibble.width = Inf)
 knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
 ```
 
-```{r load packages, include=FALSE}
+# Load the R packages that you will use
+
+If you do not have the R packages installed, you need to install them. These are the ones that I often use for reading in data, data manipulation, etc. But you can of course use others!
+
+```{r load packages}
 library(tidyverse)
 library(readxl)
 library(knitr)
+library(ggeffects)
+library(car)
+library(glmmTMB)
 ```
 
 # Data preparation
 
-## Read data from Excel files
+## Read data from Excel file
 
-Data from mothers and fathers from the greenhouse data file
+This reads the data from the sheet "SDM Data" in the Excel file "Modelling_SDM_species_data_AV.xlsx". Note that you need to change the path to the folder where you have the Excel file
 
 ```{r}
-data_mothers_fathers<-read_excel("C:/Users/avald/Dropbox/SU/Projects/cerastium_greenhouse/data/edited/Cerastium_greenhouse_spring_2022_editedAV.xlsx", 
-                       sheet="extracted_data_mothers_fathers")
+data_peat<-read_excel("data/raw/Modelling_SDM_species_data_Updated.xlsx",
+                      sheet="Sheet1")
+data_peat<-data_peat[1:29] # This is to remove some columns that we do not need!
 ```
 
+## Have a look at the data
 
+This shows the first rows of your data file in "tibble" format. You can also see the variable type for each variable (double or character).
+
+```{r}
+data_peat
+```
+
+You can see that I renamed the variables with easier (shorter) names, and also without spaces in the variable names (otherwise you can run into problems sometimes).
+
+## Convert some variables to factors
+
+It is better to convert some variables (those that are Y/N or 0/1) to factors.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(fen=as.factor(fen),imp_temp=as.factor(imp_temp),
+         nutrient=as.factor(nutrient),fire=as.factor(fire),dry=as.factor(dry)) 
+# with mutate you create new variables that are equal to the old variables
+# but are coded as factors
+```
+
+## Convert moist to numeric
+
+For some reason, moist appears as a character variable. It should be numeric, so we convert it.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(moist=as.numeric(moist))
+```
+
+## Create presence variables
+
+So far you have abundance data (% cover), but I think you also wanted to look at presences/absences. So we can create new columns with presence/absence data. So for each column, we create a column that starts with "pres_". This column will be 0 if abundance of the species is 0, and 1 otherwise
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(pres_tot_Sphagnum=ifelse(tot_Sphagnum>0,1,0),
+         # This creates a new column called "pres_tot_Spagnum"
+         # if tot_Sphagnum is larger than 0, 
+         # this column will be equal to 1 (presence)
+         # otherwise, this column will be equal to 0 (absence)
+         pres_Erio=ifelse(Erio>0,1,0),   # Same operation for Erio
+         pres_Carex=ifelse(Carex>0,1,0)) # Same for Carex... 
+# You can do the same for other species
+```
+
+Now you can see that the new columns have been created.
+
+```{r}
+data_peat
+```
+
+# Look at the distribution of some variables
+
+Histogram for total Sphagnum abundance
+
+```{r}
+hist(data_peat$tot_Sphagnum)
+```
+
+Histogram for total Sphagnum presence (you can see that this is either 0 = absence or 1 = presence)
+
+```{r}
+hist(data_peat$pres_tot_Sphagnum)
+```
+
+Histogram for total Erio presence
+
+```{r}
+hist(data_peat$pres_Erio)
+```
+
+There seems to be very few cases where pres_Erio=0. We can see them.
+
+```{r}
+data_peat%>%filter(pres_Erio==0) # Show the cases where pres_Erio is 0
+# Note the double equal sign!
+```
+
+There is only one row where Erio is absent - You won't be able to fit presence/absence models for this species where there is only one absence! I think you might have the same problem with other species. But you might fit models for the abundance of those species.
+
+# Check the correlations among your independent variables
+
+Construct a correlation matrix with all your (numeric) independent variables
+
+```{r}
+cor(data_peat%>%
+      dplyr::select(age,temp,moist),    # Select the 3 numeric independent variables
+    use="pairwise.complete.obs") 
+# This means tha the correlation between each pair of variables 
+# is computed using all complete pairs of observations on those variables
+```
+
+As you mentioned the correlation among age and temp is 0.655 - we can see later if this is a problem in the models.
+
+# Fit a couple of models for presence / absence
+
+## Total Sphagnum presence
+
+Let's fit a model for total Sphagnum presence
+
+```{r}
+mod_pres_tot_Sphagnum<-glm(pres_tot_Sphagnum~   # Your response variable
+                             age+temp+moist+
+                             nutrient+fire+dry, # Your independent variables
+                           family="binomial",   # Use the binomial family
+                           data=data_peat)      # Your data
+```
+
+And see the results
+
+```{r}
+summary(mod_pres_tot_Sphagnum)
+```
+
+The effect of age is almost significant (p=0.0586). 
+
+To see if there are problems with multicollinearity, you can check the Variance Inflation Factors (VIFs).
+You can read a bit about VIFs here: https://www.statology.org/variance-inflation-factor-r/
+Basically, if they are under some pre-defined value (some say 5, others say 2), all is good.
+
+```{r}
+vif(mod_pres_tot_Sphagnum)
+```
+
+Here they are all under 2 so everything OK!
+You can check the VIFs for all your models to see if there could be any problem with multicollinearity.
+
+You can try to fit a model only with age, to see if the effect is significant then.
+
+```{r}
+mod_pres_tot_Sphagnum_age<-glm(pres_tot_Sphagnum~   # Your response variable
+                                 age,               # Your independent variable
+                               family="binomial",   # Use the binomial family
+                               data=data_peat)      # Your data
+```
+
+And see the results
+
+```{r}
+summary(mod_pres_tot_Sphagnum_age)
+```
+
+The effect of age is significant here, and the probability of presence of total Sphagnum decreases with age. We can see the predicted effect of age.
+
+```{r}
+ggpredict(mod_pres_tot_Sphagnum_age)
+```
+
+This shows the predicted probability of presence of total Sphagnum for different ages, and the confidence intervals. You can change the age values if you want to, and do many other things with this ggeffects package (see https://cloud.r-project.org/web/packages/ggeffects/vignettes/content.html). 
+I mainly use this for plotting the predicted effects, see below.
+
+```{r}
+plot(ggpredict(mod_pres_tot_Sphagnum_age), 
+     # This plots the predicted effect from your model
+     add.data=TRUE, # And this adds the data
+     jitter=0.02)   # This adds a slight jitter to the data points
+                    # so you can see them better
+```
+
+## Erio presence
+
+Let's fit a model for total Erio presence.
+
+```{r}
+mod_pres_Erio<-glm(pres_Erio~   # Your response variable
+                     age+temp+moist+
+                     nutrient+fire+dry, # Your independent variables
+                   family="binomial",   # Use the binomial family
+                   data=data_peat)      # Your data
+```
+
+This works, but you get a warming message: "glm.fit: algorithm did not converge". And if you have a look at the results
+
+```{r}
+summary(mod_pres_Erio)
+```
+
+You get all p=1. This does not work because as we saw before, there is only one case where Erio is absent - you cannot fit presence/absence models in this case (and probably also for some other species where there are few absences or few presences).
+
+# Fit a couple of models for abundance
+
+## Total Sphagnum abundance
+
+Your species abundances are continuous proportions (see Douma & Weedon 2019), and therefore they would be better analyzed with beta regression, instead of a binomial GLM. However, for beta regression you need values of proportions bounded between 0 and 1, but not including 0 and 1. I think that the best solution for your data is to use zero-augmented / zero-inflated beta regression (see that paper and the others that I sent you). This is like a two-part model, allowing to mix two distribution functions for the same response data: a beta function for the proportional part (response y > 0), and an additive function for the binomial part (response y = 0; with logit- and log-link respectively). 
+
+You need to convert your abundances to proportions between 0 and 1 (they are percentages now). For example, we convert total Sphagnum abundance to a proportion.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(tot_Sphagnum_prop=tot_Sphagnum/100)
+```
+
+If we make a histogram we see that the values are now between 0 and 1 (including 0 and 1).
+
+```{r}
+hist(data_peat$tot_Sphagnum_prop)
+```
+
+Let's fit a model for total Sphagnum abundance. I used the function glmmTMB in the glmmTMB package, but probably you can use others (also in a Bayesian setting if you feel like it).
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum_prop~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+# ziformula=~. sets the zero-inflation formula identical to the formula
+# for the proportion part. This basically means that the same effects will be 
+# tested on presence/absence and on abundance.
+# If you specify ziformula=~0 this means that there is no zero-inflation, but
+# this will throw an error with your data, because you do have zeros.
+# You can also specify a different formula for the zero-inflation part,
+# for example, ziformula=~age will only test the effect of age
+# on presence/absence, but all the effects on abundance
+```
+
+And see the results
+
+```{r}
+summary(mod_abund_tot_Sphagnum)
+```
+
+Here, the part "Conditional model" shows the effects on abundance, and "Zero-inflation model" shows the effects on presence/absence. If you look at the coefficients for the zero-inflation part, you can see that they look pretty similar to those in the model for Total Sphagnum presence (mod_pres_tot_Sphagnum), just with the opposite sign, because here they show the probability of Spaghnum absence (i.e. the probability of having a zero). The conditional model part shows significant effects of nutrient input and dry period on total Sphagnum abundance: abundance is higher when there is a nutrient input (nutrient=1) and when there is a dry period (dry=1).
+
+Let's plot some of the predicted effects. For example, the effect of age on the probability of zero-inflation (i.e. probability of absence):
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="zi_prob",  # Plots the predicted zero-inflation probability
+               terms=c("age")), # For the effect of age 
+     add.data=FALSE) # Not adding the data here
+```
+
+I am not sure why the error band looks strange on this one (I would need to look into this), but you can see that the effect of age is the opposite as before, because this is the probability of getting a zero.
+
+The effect of nutrient input on the abundance:
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("nutrient")), # For the effect of nutrient 
+     add.data=TRUE) # You can add the data if you want
+```
+
+The effect of dry period on the abundance:
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("dry")), # For the effect of dry 
+     add.data=FALSE) # I did not add the data here
+```
+
+These plots are just for showing some examples, but for publication-ready plots I prefer to use ggplot and build them from scratch with raw data points + predictions from ggpredict(). But we can get into that later!
+
+## Erio abundance
+
+Convert Erio abundances to a proportion.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(Erio_prop=Erio/100)
+```
+
+See the histogram:
+
+```{r}
+hist(data_peat$Erio_prop)
+```
+
+Let's fit a model for Erio abundance:
+
+```{r}
+mod_abund_Erio<-glmmTMB(Erio_prop~    # Your response variable
+                          age+temp+moist+
+                          nutrient+fire+dry,  # Independent variables
+                        family="beta_family", # Use the beta family
+                        ziformula=~.,
+                        data=data_peat)       # Your data
+```
+
+And see the results
+
+```{r}
+summary(mod_abund_Erio)
+```
+
+There is also a problem with fitting this model, because as we saw before, there is only one case where Erio is absent (and therefore Erio_prop=0), so we cannot fit the zero-inflation part in this case. We can fit a beta regression for the proportion part:
+
+```{r}
+mod_abund_Erio_nozi<-glmmTMB(Erio_prop~    # Your response variable
+                               temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Erio_prop>0)) # Your data
+# Here, we use only the data where Erio_prop is larger than zero, i.e. we 
+# remove the only one case where Erio is absent, and look at effects
+# on the abundance only (not presence/absence)
+```
+
+And see the results
+
+```{r}
+summary(mod_abund_Erio_nozi)
+```
+
+Here, we only see the part "Conditional model", showing the effects on abundance. There are significant effects of nutrient input and dry period on total Erio abundance: abundance is lower when there is a nutrient input (nutrient=1) and when there is a dry period (dry=1). So the effects are opposite to Sphagnum!
+
+Let's plot some of the predicted effects. 
+
+The effect of nutrient input on Erio abundance:
+
+```{r}
+plot(ggpredict(mod_abund_Erio_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("nutrient")), # For the effect of nutrient 
+     add.data=FALSE) 
+```
+
+The effect of dry period on Erio abundance:
+
+```{r}
+plot(ggpredict(mod_abund_Erio_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("dry")), # For the effect of dry 
+     add.data=FALSE) 
+```
+
+I guess you can try this kind of models (zero-augmented / zero-inflated beta regression) for all the species you are interested in, and then you would be looking both at effects on presence/absence and on abundance. For species where you have only few absences or presences (such as Erio), I think you would only be able to look at abundance. 
+
+# Composition analyses
+
+## Ordinations
+
+Suggested reading: https://www.davidzeleny.net/anadat-r/doku.php/en:ordination
+
+(lots of info on this webpage!)
+
+Load the vegan package (you need to install it first if you don't have it installed).
+
+```{r}
+library(vegan)
+```
+
+Try with Sphagnum species
+
+### Unconstrained ordinations
+
+Data for ordination: 
+
+```{r}
+data_ordi1<-data_peat[10:21] %>%
+  filter_at(vars(Balticum:Fallax), 
+            all_vars(!is.na(.)))%>% # Remove rows with all NAs
+  filter_at(vars(Balticum:Fallax),
+            any_vars(.>0)) # Remove rows with all zeros - WHY?
+```
+
+#### PCoA
+
+Principal coordinates analysis (PCoA) with Bray-Curtis distance
+https://www.davidzeleny.net/anadat-r/doku.php/en:pcoa_nmds
+
+```{r}
+ordi1 <- capscale(data_ordi1~1,distance="bray") # Calculate ordination
+ordi1 # Summary of ordination
+eigenvals(ordi1) %>%
+  summary()
+screeplot(ordi1,type="line")
+# Plot
+vegan::ordiplot (ordi1, type = 'n')
+points (ordi1, display = 'species', pch = '+', col = 'red')
+points (ordi1, display = 'sites')
+```
+
+#### CA
+
+Correspondence analysis (CA):
+https://www.davidzeleny.net/anadat-r/doku.php/en:ca_dca
+
+```{r}
+ordi2<-cca(data_ordi1) # Calculate ordination
+ordi2 # Summary of ordination
+eigenvals(ordi2) %>%
+  summary()
+screeplot(ordi2,type="line")
+# Plot
+vegan::ordiplot (ordi2, type = 'n')
+points (ordi2, display = 'species', pch = '+', col = 'red')
+points (ordi2, display = 'sites')
+```
+
+#### DCA
+
+Detrended correspondence analysis (DCA):
+https://www.davidzeleny.net/anadat-r/doku.php/en:ca_dca
+
+```{r}
+ordi3<-decorana (data_ordi1) # Calculate ordination
+ordi3 # Summary of ordination
+eigenvals(ordi3) %>%
+  summary()
+screeplot(ordi3,type="line")
+# Plot
+vegan::ordiplot (ordi3, type = 'n')
+points (ordi3, display = 'species', pch = '+', col = 'red')
+points (ordi3, display = 'sites')
+```
+
+https://www.davidzeleny.net/anadat-r/doku.php/en:ordination#linear_or_unimodal_ordination_method
+
+The length of first DCA axis > 4 S.D. indicates a heterogeneous dataset on which unimodal methods should be used, while the length < 3 S.D. indicates a homogeneous dataset for which linear methods are suitable (see Fig. 5. In the grey zone between 3 and 4 S.D., both linear and unimodal methods are OK.
+
+The length of first DCA axis in ordi3 is 3.9048, so both methods are OK. Maybe unimodal are a bit better, cause very close to 4?
+
+### Constrained ordinations
+
+Data for ordination: 
+
+```{r}
+data_ordi2<-data_peat %>%
+  filter_at(vars(Balticum:Fallax), 
+            all_vars(!is.na(.)))%>% # Remove rows with all NAs
+  filter_at(vars(Balticum:Fallax),
+            any_vars(.>0))%>% # Remove rows with all zeros - WHY?
+  filter(!is.na(age)&!is.na(temp)&!is.na(moist)&!is.na(nutrient)&!is.na(fire)&
+           !is.na(dry))
+```
+
+#### tb-RDA
+
+Transformation-based redundancy analysis (tb-RDA)
+https://www.davidzeleny.net/anadat-r/doku.php/en:rda_cca
+
+```{r}
+ordi4<-rda(decostand( # Hellinger pre-transformation of spp composition data
+  log1p( #  transform species data to log (x+1) to avoid log (0))
+    data_ordi2[10:21]),"hell")~
+    age+temp+moist+nutrient+fire+dry, # Environmental variables
+             data = data_ordi2) # Calculate ordination
+ordi4 # Summary of ordination
+eigenvals(ordi4) %>%
+  summary()
+screeplot(ordi4,type="line")
+expl_var_ordi4 <- c(ordi4$CCA$eig/ordi4$tot.chi*100, 
+                    ordi4$CA$eig/ordi4$tot.chi*100)
+# Barplot of percentage variance explained by individual axes
+barplot (expl_var_ordi4, col = c(rep ('red', 
+                                      length (ordi4$CCA$eig/ordi4$tot.chi*100)), 
+                                 rep ('black', 
+                                      length (ordi4$CA$eig/ordi4$tot.chi*100))),
+         las = 2, ylab = '% variation')
+# Plot
+vegan::ordiplot(ordi4,display = c('species', 'sites', 'bp'))
+# Test significance of environmental variables
+# Monte Carlo permutation test:
+anova (ordi4, permutations = 999) # significance for the whole model
+anova (ordi4, by = 'margin', permutations = 999)
+# assess the marginal effects of the terms 
+# (each marginal term analysed in a model with all other variables)
+# MOST USEFUL: testing the variance explained by each explanatory variable 
+# with all the others used as covariables 
+# (independently from their order in the model):
+anova (ordi4, by = 'axis', permutations = 999) # significance for each axis
+```
+
+#### CCA
+
+Canonical correspondence analyis (CCA)
+
+```{r}
+ordi5<-cca(data_ordi2[10:21]~
+             age+temp+moist+nutrient+fire+dry, # Environmental variables
+             data = data_ordi2) # Calculate ordination
+ordi5 # Summary of ordination
+eigenvals(ordi5) %>%
+  summary()
+screeplot(ordi5,type="line")
+expl_var_ordi5 <- c(ordi5$CCA$eig/ordi5$tot.chi*100, 
+                    ordi5$CA$eig/ordi5$tot.chi*100)
+# Barplot of percentage variance explained by individual axes
+barplot (expl_var_ordi5, col = c(rep ('red', 
+                                      length (ordi5$CCA$eig/ordi5$tot.chi*100)), 
+                                 rep ('black', 
+                                      length (ordi5$CA$eig/ordi5$tot.chi*100))),
+         las = 2, ylab = '% variation')
+# Plot
+vegan::ordiplot(ordi5,display = c('species', 'sites', 'bp'))
+# Test significance of environmental variables
+# Monte Carlo permutation test:
+anova (ordi5, permutations = 999) # significance for the whole model
+anova (ordi5, by = 'margin', permutations = 999)
+# assess the marginal effects of the terms 
+# (each marginal term analysed in a model with all other variables)
+# MOST USEFUL: testing the variance explained by each explanatory variable 
+# with all the others used as covariables 
+# (independently from their order in the model):
+anova (ordi5, by = 'axis', permutations = 999) # significance for each axis
+```
+
+#### db-RDA
+
+Distance-based redundancy analysis (db-RDA) with Bray-Curtis distance
+
+```{r}
+ordi6<-capscale(data_ordi2[10:21]~
+             age+temp+moist+nutrient+fire+dry, # Environmental variables
+             data = data_ordi2, distance="bray") # Calculate ordination
+ordi6 # Summary of ordination
+eigenvals(ordi6) %>%
+  summary()
+screeplot(ordi6,type="line")
+expl_var_ordi6 <- c(ordi6$CCA$eig/ordi6$tot.chi*100, 
+                    ordi6$CA$eig/ordi6$tot.chi*100)
+# Barplot of percentage variance explained by individual axes
+barplot (expl_var_ordi6, col = c(rep ('red', 
+                                      length (ordi6$CCA$eig/ordi6$tot.chi*100)), 
+                                 rep ('black', 
+                                      length (ordi6$CA$eig/ordi6$tot.chi*100))),
+         las = 2, ylab = '% variation')
+# Plot
+vegan::ordiplot(ordi6,display = c('species', 'sites', 'bp'))
+# Test significance of environmental variables
+# Monte Carlo permutation test:
+anova (ordi6, permutations = 999) # significance for the whole model
+anova (ordi6, by = 'margin', permutations = 999)
+# assess the marginal effects of the terms 
+# (each marginal term analysed in a model with all other variables)
+# MOST USEFUL: testing the variance explained by each explanatory variable 
+# with all the others used as covariables 
+# (independently from their order in the model):
+anova (ordi6, by = 'axis', permutations = 999) # significance for each axis
+```
+
+### Indirect gradient analysis (useful?)
+
+Try to understand the relationship between environmental variables of a site and their species composition. Methods applied after an unconstrained ordination analysis. Try to relate the pattern of sites in the ordination graph to environmental variables.
+
+First, perform new ordi1, ordi2 and ordi3 on dataset data_ordi2 (with environmental variables)
+
+```{r}
+ordi1_new <- capscale(data_ordi2[10:21]~1,distance="bray") 
+ordi2_new<-cca(data_ordi2[10:21])
+ordi3_new<-decorana (data_ordi2[10:21])
+```
+
+```{r}
+envfit1<-envfit(ordi1_new~age+temp+moist+nutrient+fire+dry,data_ordi2,perm=999)
+envfit1
+vegan::ordiplot (ordi1_new, display = c("sites","species"))
+plot(envfit1)
+```
+
+```{r}
+envfit2<-envfit(ordi2_new~age+temp+moist+nutrient+fire+dry,data_ordi2,perm=999)
+envfit2
+vegan::ordiplot (ordi2_new, display = c("sites","species"))
+plot(envfit2)
+```
+
+```{r}
+envfit3<-envfit(ordi3_new~age+temp+moist+nutrient+fire+dry,data_ordi2,perm=999)
+envfit3
+vegan::ordiplot(ordi3_new, display = "sites")
+plot(envfit3)
+vegan::ordiplot(ordi3_new, display = "species")
+plot(envfit3)
+```
+
+## Dirichlet regression
+
+Load the DirichletReg package (you need to install it first if you don't have it installed).
+
+```{r}
+library(DirichletReg)
+```
+
+```{r}
+data_peat$Y <- DR_data (data_peat[,10:21])  # prepare the Y's
+dirich1 <- DirichReg(Y ~ age+temp+moist+nutrient+fire+dry, 
+                     data_peat)  
+summary(dirich1)
+```
+
+```{r}
+predicted_dirich1 <- predict(dirich1)
+# Plot
+plot(DR_data(predicted_dirich1)) 
+plot(data_peat$Y)
+```
+
+## Generalized Linear Latent Variable Models (GLLVM)
+
+Using code from: https://jenniniku.github.io/gllvm/articles/vignette1.html
+
+Load the gllvm package (you need to install it irst if you don't have it installed).
+
+```{r}
+library(gllvm)
+```
+
+Define y (matrix of abundances of the different Sphagnum species) and X (explanatory variables)
+
+```{r}
+y<-as.matrix(data_peat%>%
+               filter(if_any(Balticum:Fallax, ~ !is.na(.)))%>%
+               # Remove rows with no Sphagnum abundances
+               filter(!is.na(moist))%>%
+               # Remove rows with no moisture data
+               dplyr::select(Balticum:Fallax))
+X<-as.matrix(data_peat%>%
+               filter(if_any(Balticum:Fallax, ~ !is.na(.)))%>%
+               # Remove rows with no Sphagnum abundances
+               filter(!is.na(moist))%>%
+               # Remove rows with no moisture data
+               dplyr::select(c(age:temp,moist:dry))%>%
+               mutate(nutrient=as.numeric(nutrient),
+                      fire=as.numeric(fire),
+                      dry=as.numeric(dry)))
+```
+
+Fit models, use three different distributions:
+
+```{r}
+# Model without predictors
+gllvm1_p<-gllvm(y,family="poisson",method="LA")
+gllvm1_nb<-gllvm(y,family="negative.binomial",method="LA")
+gllvm1_zip<-gllvm(y,family="ZIP",method="LA")
+
+# Model with predictors
+gllvm2_p<-gllvm(y,X,family="poisson",method="LA")
+gllvm2_nb<-gllvm(y,X,family="negative.binomial",method="LA")
+gllvm2_zip<-gllvm(y,X,family="ZIP",method="LA")
+```
+
+```{r}
+gllvm1_p
+gllvm1_nb
+gllvm1_zip
+```
+
+```{r}
+gllvm2_p
+gllvm2_nb
+gllvm2_zip
+```
+
+Lowest AIC / AICc / BIC mean better fit. ZIP always has the highest values, so not suitable.
+We can fit both Poisson and Negative binomial models, as it is not sure which one provides the best fit.
+
+Residual plots for diagnosing model fit:
+
+```{r}
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+plot(gllvm1_p)
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+plot(gllvm1_nb)
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+plot(gllvm2_p)
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+plot(gllvm2_nb)
+```
+
+```{r fig.height=8, fig.width=8}
+ordiplot(gllvm1_p, biplot = TRUE, main = "Biplot", s.cex=0.8)
+ordiplot(gllvm1_p, biplot = FALSE, main = "Ordination plot", 
+         predict.region = TRUE, s.cex=0.8)
+ordiplot(gllvm1_nb, biplot = TRUE, main = "Biplot", s.cex=0.8)
+ordiplot(gllvm1_nb, biplot = FALSE, main = "Ordination plot", 
+         predict.region = TRUE, s.cex=0.8)
+```
+
+```{r}
+criteria_p <- NULL
+for(i in 1:5){
+  fiti <- gllvm(y, X, family = "poisson", num.lv = i, sd.errors = FALSE,
+                formula = ~ age+temp+moist+nutrient+fire+dry, seed = 1234)
+  criteria_p[i] <- summary(fiti)$AICc
+  names(criteria_p)[i] = i
+}
+```
+
+```{r}
+criteria_nb <- NULL
+for(i in 1:5){
+  fiti <- gllvm(y, X, family = "negative.binomial", num.lv = i, sd.errors = FALSE,
+                formula = ~ age+temp+moist+nutrient+fire+dry, seed = 1234)
+  criteria_nb[i] <- summary(fiti)$AICc
+  names(criteria_nb)[i] = i
+}
+```
+
+```{r}
+criteria_p
+criteria_nb
+```
+
+A model with 1 latent variable provides the lowest AICc with both distributions.
+
+Fit models with and 1 latent variable:
+
+```{r}
+gllvm2_p_1lv<-gllvm(y,X,family="poisson",num.lv = 1)
+gllvm2_nb_1lv<-gllvm(y,X,family="negative.binomial",num.lv = 1)
+```
+
+Plot estimated coefficients for predictors and their confidence intervals.
+
+```{r}
+gllvm::coefplot(gllvm2_p_1lv, cex.ylab = 0.7, mar = c(4, 9, 2, 1), mfrow=c(1,1))
+gllvm::coefplot(gllvm2_nb_1lv, cex.ylab = 0.7, mar = c(4, 9, 2, 1), mfrow=c(1,1))
+```
+
+See how many rows have non-zero values for each species:
+
+```{r}
+colSums( data_peat%>%
+           filter(if_any(Balticum:Fallax, ~ !is.na(.)))%>%
+           dplyr::select(Balticum:Fallax) != 0)
+```
+
+Some species are present very few times - problems?
+
+This might explan some of the extreme effect sizes that we see in the coefficient plots for some of the species that are present very few times (Fallax, Tenellum, Angustifolium). Due to lack of variation in the predictors the effects sizes tend to become extreme.
+
+Try model without these three species.
+
+Define y (matrix of abundances of the different Sphagnum species) and X (explanatory variables)
+
+```{r}
+y_new<-as.matrix(data_peat%>%
+               filter(if_any(c(Balticum:`Diseased Acutifolia`,Papillosum), ~ !is.na(.)))%>%
+               # Remove rows with no Sphagnum abundances
+               filter(!is.na(moist))%>%
+               # Remove rows with no moisture data
+               dplyr::select(c(Balticum:`Diseased Acutifolia`,Papillosum)))
+X_new<-as.matrix(data_peat%>%
+               filter(if_any(c(Balticum:`Diseased Acutifolia`,Papillosum), ~ !is.na(.)))%>%
+               # Remove rows with no Sphagnum abundances
+               filter(!is.na(moist))%>%
+               # Remove rows with no moisture data
+               dplyr::select(c(age:temp,moist:dry))%>%
+               mutate(nutrient=as.numeric(nutrient),
+                      fire=as.numeric(fire),
+                      dry=as.numeric(dry)))
+```
+
+Fit models, use two different distributions:
+
+```{r}
+# Model without predictors
+gllvm1_p_new<-gllvm(y_new,family="poisson",method="LA")
+gllvm1_nb_new<-gllvm(y_new,family="negative.binomial",method="LA")
+gllvm1_zip_new<-gllvm(y_new,family="ZIP",method="LA")
+
+# Model with predictors
+gllvm2_p_new<-gllvm(y_new,X_new,family="poisson",method="LA")
+gllvm2_nb_new<-gllvm(y_new,X_new,family="negative.binomial",method="LA")
+gllvm2_zip_new<-gllvm(y_new,X_new,family="ZIP",method="LA")
+```
+
+```{r}
+gllvm1_p_new
+gllvm1_nb_new
+gllvm1_zip_new
+```
+
+```{r}
+gllvm2_p_new
+gllvm2_nb_new
+gllvm2_zip_new
+```
+
+In this case it is clear that a Poisson distribution provides the best fit. We will use only this distribution.
+
+Residual plots for diagnosing model fit:
+
+```{r}
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+plot(gllvm1_p_new)
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+plot(gllvm2_p_new)
+```
+
+```{r}
+criteria_p_new <- NULL
+for(i in 1:5){
+  fiti <- gllvm(y_new, X_new, family = "poisson", num.lv = i, sd.errors = FALSE,
+                formula = ~ age+temp+moist+nutrient+fire+dry, seed = 1234)
+  criteria_p_new[i] <- summary(fiti)$AICc
+  names(criteria_p_new)[i] = i
+}
+```
+
+```{r}
+criteria_p_new
+```
+
+A model with 1 latent variable provides the lowest AICc.
+
+Fit model with and 1 latent variable:
+
+```{r}
+gllvm2_p_new_1lv<-gllvm(y_new,X_new,family="poisson",num.lv = 1)
+```
+
+Plot estimated coefficients for predictors and their confidence intervals.
+
+```{r}
+gllvm::coefplot(gllvm2_p_new_1lv, cex.ylab = 0.7, mar = c(4, 9, 2, 1),
+                mfrow=c(1,1))
+```
+
+Now we do not see any extreme effect sizes.
+
+Coloring ordination points according to the variables:
+
+```{r}
+# Arbitrary color palette, a vector length of 20. 
+# Can use, for example, colorRampPalette from package grDevices
+rbPal <- c("#00FA9A", "#00EC9F", "#00DFA4", "#00D2A9", "#00C5AF", "#00B8B4", "#00ABB9", "#009DBF", "#0090C4", "#0083C9", "#0076CF", "#0069D4", "#005CD9", "#004EDF", "#0041E4", "#0034E9", "#0027EF", "#001AF4", "#000DF9", "#0000FF")
+par(mfrow = c(3,2), mar=c(4,4,2,2))
+for(i in 1:ncol(X_new)){
+Col <- rbPal[as.numeric(cut(X_new[,i], breaks = 20))]
+ordiplot(gllvm2_p_new_1lv, symbols = T, s.colors = Col, main = colnames(X_new)[i], 
+         biplot = TRUE)
+}
+```
+
+Constrained ordination: we set the number of unconstrained latent variables to zero
+
+```{r}
+gllvm2_p_new_constr<-gllvm(y_new,X_new,family="poisson",num.lv = 0,method="LA")
+gllvm2_nb_new_constr<-gllvm(y_new,X_new,family="negative.binomial",num.lv = 0,
+                            method="LA")
+gllvm2_zip_new_constr<-gllvm(y_new,X_new,family="ZIP",num.lv = 0,
+                             method="LA")
+```
+
+```{r}
+AIC(gllvm2_p_new_constr,gllvm2_nb_new_constr,gllvm2_zip_new_constr)
+```
+
+Poisson gives better fit (lowest AIC).
+
+Determine the rank, number of latent variables or ordination axes, by using information criteria.
+
+```{r}
+gllvm2_p_new_constr_1<-gllvm(y_new,X_new,family="poisson",
+                             num.RR = 1,method="LA")
+gllvm2_p_new_constr_2<-gllvm(y_new,X_new,family="poisson"
+                             ,num.RR = 2,method="LA")
+gllvm2_p_new_constr_3<-gllvm(y_new,X_new,family="poisson",
+                             num.RR = 3,method="LA")
+gllvm2_p_new_constr_4<-gllvm(y_new,X_new,family="poisson",
+                             num.RR = 4,method="LA")
+gllvm2_p_new_constr_5<-gllvm(y_new,X_new,family="poisson",
+                             num.RR = 5,method="LA")
+```
+
+```{r}
+AIC(gllvm2_p_new_constr_1,gllvm2_p_new_constr_2,gllvm2_p_new_constr_3,
+    gllvm2_p_new_constr_4,gllvm2_p_new_constr_5)
+```
+
+Best fit with 1 latent variable.
+
+```{r}
+ordiplot(gllvm2_p_new_constr_2, biplot = TRUE,symbols=T,arrow.scale=0.9)
+```
 
 # Session info
+
+This just shows info on your R session, might be useful.
 
 ```{r}
 sessionInfo()

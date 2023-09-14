@@ -1,0 +1,297 @@
+---
+title: Analyses of species distributions in peatlands
+author: "Alicia Valdés"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+  html_document:
+    toc: yes
+    toc_depth: '4'
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+options(tibble.width = Inf)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r Define ggplot themes and palettes, include=FALSE}
+my_theme <- function(){
+  theme_base()+theme(plot.background=element_rect(fill="white", colour=NA))+
+  theme(legend.position="none")+theme(text=element_text(family="serif"))+
+  theme(plot.title = element_text(hjust =-0.06))
+}
+my_theme_legend <- function(){
+  theme_base()+theme(plot.background=element_rect(fill="white", colour=NA))+
+  theme(text=element_text(family="serif"))+
+  theme(plot.title = element_text(hjust =-0.06))
+}
+```
+
+# Load the R packages that you will use
+
+If you do not have the R packages installed, you need to install them. These are the ones that I often use for reading in data, data manipulation, etc. But you can of course use others!
+
+```{r load packages}
+library(tidyverse)
+library(readxl)
+library(knitr)
+library(ggeffects)
+library(car)
+library(glmmTMB)
+library(ggthemes)
+library(gridExtra)
+```
+
+# Data preparation
+
+## Read data from Excel file and convert variables
+
+```{r}
+data_peat<-read_excel("data/edited/Modelling_SDM_species_data.xlsx",
+                      sheet="SDM Data")
+data_peat<-data_peat%>%
+  mutate(fen=as.factor(fen),imp_temp=as.factor(imp_temp),
+         nutrient=as.factor(nutrient),fire=as.factor(fire),dry=as.factor(dry)) 
+# with mutate you create new variables that are equal to the old variables
+# but are coded as factors
+data_peat<-data_peat%>%
+  mutate(moist=as.numeric(moist))
+```
+
+
+# Models for abundance
+
+## Total Sphagnum abundance
+
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(tot_Sphagnum_prop=tot_Sphagnum/100)
+```
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum_prop~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+# ziformula=~. sets the zero-inflation formula identical to the formula
+# for the proportion part. This basically means that the same effects will be 
+# tested on presence/absence and on abundance.
+# If you specify ziformula=~0 this means that there is no zero-inflation, but
+# this will throw an error with your data, because you do have zeros.
+# You can also specify a different formula for the zero-inflation part,
+# for example, ziformula=~age will only test the effect of age
+# on presence/absence, but all the effects on abundance
+```
+
+```{r}
+summary(mod_abund_tot_Sphagnum)
+```
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="zi_prob",  # Plots the predicted zero-inflation probability
+               terms=c("age[all]")), # For the effect of age 
+     add.data=T) # Not adding the data here
+```
+
+I am not sure why the error band looks strange on this one (I would need to look into this), but you can see that the effect of age is the opposite as before, because this is the probability of getting a zero.
+
+The effect of nutrient input on the abundance:
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("nutrient")), # For the effect of nutrient 
+     add.data=TRUE) # You can add the data if you want
+```
+
+The effect of dry period on the abundance:
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("dry")), # For the effect of dry 
+     add.data=FALSE) # I did not add the data here
+```
+
+```{r}
+plots_sphagnum<-grid.arrange(
+  # nutrient
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=nutrient,y=tot_Sphagnum_prop),
+              position = position_jitter(0.1,0.01),size=3,alpha=0.2,shape=16)+
+    geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                         type="fixed",terms=c("nutrient"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                            type="fixed",terms=c("nutrient"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient input")+ylab("Total Spaghnum abundance"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=tot_Sphagnum_prop),
+                position = position_jitter(0.1,0.01),size=3,alpha=0.2,shape=16)+
+    geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Total Spaghnum abundance"),
+  # age
+  # I woulnd't plot this one!
+  ggplot()+
+    geom_point(data=data_peat,aes(x=age,y=tot_Sphagnum_prop),
+               size=3,alpha=0.2,shape=16)+
+    geom_ribbon(data=data.frame(ggpredict(mod_abund_tot_Sphagnum,
+                                          type="zi_prob",terms=c("age[all]"))),
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                color="grey",alpha=0.3)+
+    geom_line(data=data.frame(ggpredict(mod_abund_tot_Sphagnum,
+                                        type="zi_prob",terms=c("age[all]"))),
+              aes(x=x,y=1-predicted))+
+    my_theme()+xlab("Age")+ylab("Probability of total Sphagnum presence"),
+  ncol=3
+)
+ggsave(filename="output/figures/plots_sphagnum.tiff",plot=plots_sphagnum,
+       width=36,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_sphagnum.pdf",plot=plots_sphagnum,
+       width=36,height=12,units="cm",dpi=300)
+```
+
+```{r}
+plots_sphagnum_nopoints<-grid.arrange(
+  # nutrient
+  ggplot()+
+    geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                         type="fixed",terms=c("nutrient"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                            type="fixed",terms=c("nutrient"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient input")+ylab("Total Spaghnum abundance"),
+  # dry
+  ggplot()+
+    geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Total Spaghnum abundance"),
+  ncol=2
+)
+ggsave(filename="output/figures/plots_sphagnum_nopoints.tiff",
+       plot=plots_sphagnum_nopoints,width=24,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_sphagnum_nopoints.pdf",
+       plot=plots_sphagnum_nopoints,width=24,height=12,units="cm",dpi=300)
+```
+
+## Medium
+
+```{r}
+data_peat$Medium<-ifelse(data_peat$Medium>99,99,data_peat$Medium)
+data_peat$Fuscum<-ifelse(data_peat$Fuscum>99,99,data_peat$Fuscum)
+mod_abund_Medium<-glmmTMB(Medium/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Medium)
+```
+
+```{r}
+plots_medium<-grid.arrange(
+  # nutrient
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=nutrient,y=Medium/100),
+              position = position_jitter(0.1,0.01),size=3,alpha=0.2,shape=16)+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                         type="fixed",terms=c("nutrient"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                            type="fixed",terms=c("nutrient"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient input")+ylab("Total Medium abundance"),
+  # fire
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=fire,y=Medium/100),
+              position = position_jitter(0.1,0.01),size=3,alpha=0.2,shape=16)+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                         type="fixed",terms=c("fire"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                            type="fixed",terms=c("fire"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Fire")+ylab("Total Medium abundance"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=Medium/100),
+                position = position_jitter(0.1,0.01),size=3,alpha=0.2,shape=16)+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Total Medium abundance"),
+  # age
+  ggplot()+
+    geom_point(data=data_peat,aes(x=age,y=Medium/100),
+               size=3,alpha=0.2,shape=16)+
+    geom_ribbon(data=data.frame(ggpredict(mod_abund_Medium,
+                                          type="zi_prob",terms=c("age[all]"))),
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                color="grey",alpha=0.3)+
+    geom_line(data=data.frame(ggpredict(mod_abund_Medium,
+                                        type="zi_prob",terms=c("age[all]"))),
+              aes(x=x,y=1-predicted))+
+    my_theme()+xlab("Age")+ylab("Probability of Medium presence"),
+  ncol=2
+)
+ggsave(filename="output/figures/plots_medium.tiff",
+       plot=plots_medium,width=24,height=24,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_medium.pdf",
+       plot=plots_medium,width=24,height=24,units="cm",dpi=300)
+```
+
+
+# Session info
+
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+

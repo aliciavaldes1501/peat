@@ -1,0 +1,225 @@
+---
+title: Analyses of species distributions in peatlands
+author: "Alicia Valdés"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+  html_document:
+    toc: yes
+    toc_depth: '4'
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+options(tibble.width = Inf)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+# Load the R packages that you will use
+
+If you do not have the R packages installed, you need to install them. 
+
+```{r load packages}
+library(tidyverse)
+library(readxl)
+library(knitr)
+library(ggeffects)
+library(car)
+library(glmmTMB)
+library(ggplot2)
+library(BiodiversityR)
+library(vegan)
+library(rdacca.hp)
+```
+
+# Data preparation
+
+## Read data from Excel file
+
+Note that you need to change the path to the folder where you have the Excel file
+
+```{r}
+data_peat<-read_excel("data/raw/Modelling_SDM_species_data_Updated.xlsx",
+                      sheet="Sheet1")
+data_peat<-data_peat[1:29] # This is to remove some columns that we do not need!
+```
+
+## Have a look at the data
+
+This shows the first rows of your data file in "tibble" format. You can also see the variable type for each variable (double or character).
+
+```{r}
+data_peat
+```
+
+## Convert some variables to factors
+
+It is better to convert some variables (those that are Y/N or 0/1) to factors.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(fen=as.factor(fen),imp_temp=as.factor(imp_temp),
+         nutrient=as.factor(nutrient),fire=as.factor(fire),dry=as.factor(dry)) 
+# with mutate you create new variables that are equal to the old variables
+# but are coded as factors
+```
+
+## Convert moist to numeric
+
+For some reason, moist appears as a character variable. It should be numeric, so we convert it.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(moist=as.numeric(moist))
+```
+
+# Ordinations (vegan package)
+
+Suggested reading: https://www.davidzeleny.net/anadat-r/doku.php/en:ordination
+
+(lots of info on this webpage!)
+
+Chapter 10 in this pdf: https://apps.worldagroforestry.org/downloads/Publications/PDFS/b13695.pdf
+
+Using the vegan package.
+
+I performed some ordinations with Sphagnum species. I tried different methods, but if I would need to choose one, I would do a constrained ordination, specifically a Distance-based redundancy analysis (db-RDA) with Bray-Curtis distance. You can read about all types in the webpage above if you feel like it. 
+
+Data for ordination: 
+
+```{r}
+data_ordi2<-data_peat %>%
+  filter_at(vars(Balticum:Fallax), 
+            all_vars(!is.na(.)))%>% # Remove rows with all NAs
+  filter_at(vars(Balticum:Fallax),
+            any_vars(.>0))%>% # Remove rows with all zeros - WHY?
+  filter(!is.na(age)&!is.na(temp)&!is.na(moist)&!is.na(nutrient)&!is.na(fire)&
+           !is.na(dry))%>% # Remove rows with NA in predictors
+  rename(Deformed_Acutifolia=`Diseased Acutifolia`) #Rename to avoid problems
+```
+
+Distance-based redundancy analysis (db-RDA) with Bray-Curtis distance.
+
+See https://www.davidzeleny.net/anadat-r/doku.php/en:similarity for info on distances.
+
+Calculate ordination:
+
+```{r}
+ordi6<-capscale(data_ordi2[10:21]~ # species data matrix
+             age+temp+moist+nutrient+fire+dry, # Environmental variables
+             data = data_ordi2, distance="bray") # Bray-Curtis distance
+
+```
+
+Result of the ordination:
+
+```{r}
+ordi6
+```
+
+"Intertia" is the total variance - your environmental variables explain 0.2704 of this variance ("constrained" part).
+
+Proportion explained by each ordination axis. CAP1-CAP6 are the "constrained" axes, explained by your environmental variables. MDS1-MDS34 are the "unconstrained" axes.
+
+```{r}
+eigenvals(ordi6) %>%
+  summary()
+```
+
+Barplot of percentage variance explained by individual axes
+
+```{r}
+expl_var_ordi6 <- c(ordi6$CCA$eig/ordi6$tot.chi*100, 
+                    ordi6$CA$eig/ordi6$tot.chi*100)
+barplot (expl_var_ordi6, col = c(rep ('red', 
+                                      length (ordi6$CCA$eig/ordi6$tot.chi*100)), 
+                                 rep ('black', 
+                                      length (ordi6$CA$eig/ordi6$tot.chi*100))),
+         las = 2, ylab = '% variation')
+```
+
+Plot of the ordination (species in red and sites-samples in black):
+
+```{r fig.height=6, fig.width=6}
+vegan::ordiplot(ordi6,display = c('species', 'sites', 'bp'))
+orditorp(ordi6,display="species",cex=0.8,col="red")
+```
+
+This shows the two first constrained axes of the ordination. You can see how the sites and species distribute along these axes.
+
+Test significance of the ordination with Monte Carlo permutation test.
+
+For the whole model:
+
+```{r}
+anova (ordi6, permutations = 999) 
+```
+
+The model is significant.
+
+For each explanatory variable (with all the others used as covariables, independently from their order in the model):
+
+```{r}
+anova (ordi6, by = 'margin', permutations = 999)
+```
+
+Age, moist, nutrient and dry show significant effects.
+
+For each axis:
+
+```{r}
+anova (ordi6, by = 'axis', permutations = 999)
+```
+
+Axis 1 and 2 are significant.
+
+Ordination plot with ggplot2.
+
+Install ggord package (you only need to do this once):
+
+```{r}
+# Enable the r-universe repo
+options(repos = c(
+    fawda123 = 'https://fawda123.r-universe.dev',
+    CRAN = 'https://cloud.r-project.org'))
+
+# Install ggord
+install.packages('ggord')
+```
+
+Load ggord package:
+
+```{r}
+library(ggord)
+```
+
+
+```{r}
+ggord(ordi6,ptslab=T,repel=T,labcol="red",veccol="red",size=NA,addsize=3,
+      xlims=c(-1.1,1.1),ylims=c(-1.1,1.1))+
+  geom_point(size=3,shape=20,color="black",alpha=0.2)
+```
+
+## Hierarchical partitioning
+
+```{r}
+dist_matrix<-vegdist(data_ordi2[10:21],method="bray")
+```
+
+```{r}
+hierpart1<-rdacca.hp(dist_matrix,data_ordi2[c(23:24,26:29)],method = "dbRDA",
+          type ="adjR2",scale = F,add = T,sqrt.dist = T)
+hierpart1
+plot(hierpart1,plot.perc=T)
+```
+
+```{r}
+cor(data_ordi2[c(23:24)]) # Correlation among age and temp is 0.762
+vif.cca(ordi6)
+# But VIF of the ordination is not super high, probably ok to keep both
+```
+

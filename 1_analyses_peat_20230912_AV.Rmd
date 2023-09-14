@@ -1,0 +1,983 @@
+---
+title: "Analyses of species distributions in peatlands"
+author: "Alicia Valdés"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  word_document:
+    toc: yes
+    toc_depth: '4'
+  html_document:
+    toc: yes
+    toc_depth: '4'
+    df_print: paged
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+options(tibble.width = Inf)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+# Load the R packages that you will use
+
+If you do not have the R packages installed, you need to install them. These are the ones that I often use for reading in data, data manipulation, etc. But you can of course use others!
+
+```{r load packages}
+library(tidyverse)
+library(readxl)
+library(knitr)
+library(ggeffects)
+library(car)
+library(glmmTMB)
+```
+
+# Data preparation
+
+## Read data from Excel file
+
+This reads the data from the sheet "SDM Data" in the Excel file "Modelling_SDM_species_data_AV.xlsx". Note that you need to change the path to the folder where you have the Excel file
+
+```{r}
+data_peat<-read_excel("data/edited/Modelling_SDM_species_data.xlsx",
+                      sheet="SDM Data")
+
+```
+
+## Have a look at the data
+
+This shows the first rows of your data file in "tibble" format. You can also see the variable type for each variable (double or character).
+
+```{r}
+data_peat
+```
+
+You can see that I renamed the variables with easier (shorter) names, and also without spaces in the variable names (otherwise you can run into problems sometimes).
+
+## Convert some variables to factors
+
+It is better to convert some variables (those that are Y/N or 0/1) to factors.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(fen=as.factor(fen),imp_temp=as.factor(imp_temp),
+         nutrient=as.factor(nutrient),fire=as.factor(fire),dry=as.factor(dry)) 
+# with mutate you create new variables that are equal to the old variables
+# but are coded as factors
+```
+
+## Convert moist to numeric
+
+For some reason, moist appears as a character variable. It should be numeric, so we convert it.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(moist=as.numeric(moist))
+```
+
+## Create presence variables
+
+So far you have abundance data (% cover), but I think you also wanted to look at presences/absences. So we can create new columns with presence/absence data. So for each column, we create a column that starts with "pres_". This column will be 0 if abundance of the species is 0, and 1 otherwise
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(pres_tot_Sphagnum=ifelse(tot_Sphagnum>0,1,0),
+         # This creates a new column called "pres_tot_Spagnum"
+         # if tot_Sphagnum is larger than 0, 
+         # this column will be equal to 1 (presence)
+         # otherwise, this column will be equal to 0 (absence)
+         pres_Erio=ifelse(Erio>0,1,0),   # Same operation for Erio
+         pres_Carex=ifelse(Carex>0,1,0),
+         pres_Erica=ifelse(Erica>0,1,0)) # Same for Carex... 
+# You can do the same for other species
+```
+
+Now you can see that the new columns have been created.
+
+```{r}
+data_peat
+```
+
+# Look at the distribution of some variables
+
+Histogram for total Sphagnum abundance
+
+```{r}
+hist(data_peat$tot_Sphagnum)
+hist(data_peat$pres_Erica)
+hist(data_peat$pres_tot_Sphagnum)
+hist(data_peat$pres_Carex)
+```
+
+Histogram for total Sphagnum presence (you can see that this is either 0 = absence or 1 = presence)
+
+```{r}
+hist(data_peat$pres_tot_Sphagnum)
+```
+
+Histogram for total Erio presence
+
+```{r}
+hist(data_peat$pres_Erio)
+```
+
+There seems to be very few cases where pres_Erio=0. We can see them.
+
+```{r}
+data_peat%>%filter(pres_Erio==0) # Show the cases where pres_Erio is 0
+# Note the double equal sign!
+```
+
+There is only one row where Erio is absent - You won't be able to fit presence/absence models for this species where there is only one absence! I think you might have the same problem with other species. But you might fit models for the abundance of those species.
+
+# Check the correlations among your independent variables
+
+Construct a correlation matrix with all your (numeric) independent variables
+
+```{r}
+cor(data_peat%>%
+      select(age,temp,moist),    # Select the 3 numeric independent variables
+    use="pairwise.complete.obs") 
+# This means tha the correlation between each pair of variables 
+# is computed using all complete pairs of observations on those variables
+```
+
+As you mentioned the correlation among age and temp is 0.655 - we can see later if this is a problem in the models.
+
+# Fit a couple of models for presence / absence
+
+## Total Sphagnum presence
+
+Let's fit a model for total Sphagnum presence
+
+```{r}
+mod_pres_tot_Sphagnum<-glm(pres_tot_Sphagnum~   # Your response variable
+                             age+temp+moist+
+                             nutrient+fire+dry, # Your independent variables
+                           family="binomial",   # Use the binomial family
+                           data=data_peat)      # Your data
+```
+
+And see the results
+
+```{r}
+summary(mod_pres_tot_Sphagnum)
+```
+
+The effect of age is almost significant (p=0.0586). 
+
+To see if there are problems with multicollinearity, you can check the Variance Inflation Factors (VIFs).
+You can read a bit about VIFs here: https://www.statology.org/variance-inflation-factor-r/
+Basically, if they are under some pre-defined value (some say 5, others say 2), all is good.
+
+```{r}
+vif(mod_pres_tot_Sphagnum)
+```
+
+Here they are all under 2 so everything OK!
+You can check the VIFs for all your models to see if there could be any problem with multicollinearity.
+
+You can try to fit a model only with age, to see if the effect is significant then.
+
+```{r}
+mod_pres_tot_Sphagnum_age<-glm(pres_tot_Sphagnum~   # Your response variable
+                                 age,               # Your independent variable
+                               family="binomial",   # Use the binomial family
+                               data=data_peat)      # Your data
+```
+
+And see the results
+
+```{r}
+summary(mod_pres_tot_Sphagnum_age)
+```
+
+The effect of age is significant here, and the probability of presence of total Sphagnum decreases with age. We can see the predicted effect of age.
+
+```{r}
+ggpredict(mod_pres_tot_Sphagnum_age)
+```
+
+This shows the predicted probability of presence of total Sphagnum for different ages, and the confidence intervals. You can change the age values if you want to, and do many other things with this ggeffects package (see https://cloud.r-project.org/web/packages/ggeffects/vignettes/content.html). 
+I mainly use this for plotting the predicted effects, see below.
+
+```{r}
+mod_pres_tot_Sphagnum_temp<-glm(pres_tot_Sphagnum~   # Your response variable
+                                 temp,               # Your independent variable
+                               family="binomial",   # Use the binomial family
+                               data=data_peat)      # Your data
+```
+
+```{r}
+summary(mod_pres_tot_Sphagnum_temp)
+```
+
+```{r}
+plot(ggpredict(mod_pres_tot_Sphagnum_age), 
+     # This plots the predicted effect from your model
+     add.data=FALSE, # And this adds the data
+     jitter=0.02)   # This adds a slight jitter to the data points
+                    # so you can see them better
+```
+
+
+```{r}
+plot(ggpredict(mod_pres_tot_Sphagnum_age), 
+     # This plots the predicted effect from your model
+     add.data=FALSE, # And this adds the data
+     jitter=0.02)   # This adds a slight jitter to the data points
+                    # so you can see them better
+plot(ggpredict(mod_pres_tot_Sphagnum), 
+     # This plots the predicted effect from your model
+     add.data=TRUE, # And this adds the data
+     jitter=0.02)   # This adds a slight jitter to the data points
+                    # so you can see them better
+
+
+```
+
+## Erio presence
+
+Let's fit a model for total Erio presence.
+
+
+```{r}
+mod_pres_Erio<-glm(pres_Erio~   # Your response variable
+                     age+temp+moist+
+                     nutrient+fire+dry, # Your independent variables
+                   family="binomial",   # Use the binomial family
+                   data=data_peat)      # Your data
+```
+
+This works, but you get a warming message: "glm.fit: algorithm did not converge". And if you have a look at the results
+
+```{r}
+summary(mod_pres_Erio)
+```
+
+You get all p=1. This does not work because as we saw before, there is only one case where Erio is absent - you cannot fit presence/absence models in this case (and probably also for some other species where there are few absences or few presences).
+
+# Fit a couple of models for abundance
+
+## Total Sphagnum abundance
+
+Your species abundances are continuous proportions (see Douma & Weedon 2019), and therefore they would be better analyzed with beta regression, instead of a binomial GLM. However, for beta regression you need values of proportions bounded between 0 and 1, but not including 0 and 1. I think that the best solution for your data is to use zero-augmented / zero-inflated beta regression (see that paper and the others that I sent you). This is like a two-part model, allowing to mix two distribution functions for the same response data: a beta function for the proportional part (response y > 0), and an additive function for the binomial part (response y = 0; with logit- and log-link respectively). 
+
+You need to convert your abundances to proportions between 0 and 1 (they are percentages now). For example, we convert total Sphagnum abundance to a proportion.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(tot_Sphagnum_prop=tot_Sphagnum/100)
+
+data_peat<-data_peat%>%
+  mutate(Erica_prop=Erica/100)
+
+```
+
+If we make a histogram we see that the values are now between 0 and 1 (including 0 and 1).
+
+```{r}
+hist(data_peat$tot_Sphagnum_prop)
+
+hist(data_peat$Erica_prop)
+
+```
+
+Let's fit a model for total Sphagnum abundance. I used the function glmmTMB in the glmmTMB package, but probably you can use others (also in a Bayesian setting if you feel like it).
+
+Model 1: Total Sphagnum beta 
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum/100~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+# ziformula=~. sets the zero-inflation formula identical to the formula
+# for the proportion part. This basically means that the same effects will be 
+# tested on presence/absence and on abundance.
+# If you specify ziformula=~0 this means that there is no zero-inflation, but
+# this will throw an error with your data, because you do have zeros.
+# You can also specify a different formula for the zero-inflation part,
+# for example, ziformula=~age will only test the effect of age
+# on presence/absence, but all the effects on abundance
+```
+
+And see the results
+
+```{r}
+summary(mod_abund_tot_Sphagnum)
+```
+
+Here, the part "Conditional model" shows the effects on abundance, and "Zero-inflation model" shows the effects on presence/absence. If you look at the coefficients for the zero-inflation part, you can see that they look pretty similar to those in the model for Total Sphagnum presence (mod_pres_tot_Sphagnum), just with the opposite sign, because here they show the probability of Spaghnum absence (i.e. the probability of having a zero). The conditional model part shows significant effects of nutrient input and dry period on total Sphagnum abundance: abundance is higher when there is a nutrient input (nutrient=1) and when there is a dry period (dry=1).
+
+Let's plot some of the predicted effects. For example, the effect of age on the probability of zero-inflation (i.e. probability of absence):
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="zi_prob",  # Plots the predicted zero-inflation probability
+               terms=c("age")), # For the effect of age 
+     add.data=FALSE) # Not adding the data here
+```
+
+I am not sure why the error band looks strange on this one (I would need to look into this), but you can see that the effect of age is the opposite as before, because this is the probability of getting a zero.
+
+The effect of nutrient input on the abundance:
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("nutrient")), # For the effect of nutrient 
+     add.data=TRUE) # You can add the data if you want
+```
+
+The effect of dry period on the abundance:
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("dry")), # For the effect of dry 
+     add.data=FALSE) # I did not add the data here
+
+plot(ggpredict(mod_abund_tot_Sphagnum, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("dry")), # For the effect of dry 
+     add.data=TRUE) # I did not add the data here
+
+```
+
+These plots are just for showing some examples, but for publication-ready plots I prefer to use ggplot and build them from scratch with raw data points + predictions from ggpredict(). But we can get into that later!
+
+## Erio abundance
+
+Convert Erio abundances to a proportion.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(Erio_prop=Erio/100)
+```
+
+See the histogram:
+
+```{r}
+hist(data_peat$Erio_prop)
+```
+
+Let's fit a model for Erio abundance:
+
+```{r}
+mod_abund_Erio<-glmmTMB(Erio_prop~    # Your response variable
+                          age+temp+moist+
+                          nutrient+fire+dry,  # Independent variables
+                        family="beta_family", # Use the beta family
+                        ziformula=~.,
+                        data=data_peat)       # Your data
+
+
+```
+
+And see the results
+
+```{r}
+summary(mod_abund_Erio)
+```
+
+There is also a problem with fitting this model, because as we saw before, there is only one case where Erio is absent (and therefore Erio_prop=0), so we cannot fit the zero-inflation part in this case. We can fit a beta regression for the proportion part:
+
+Model 2: Eriophorum
+
+```{r}
+mod_abund_Erio_nozi<-glmmTMB(Erio_prop~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Erio_prop>0)) # Your data
+# Here, we use only the data where Erio_prop is larger than zero, i.e. we 
+# remove the only one case where Erio is absent, and look at effects
+# on the abundance only (not presence/absence)
+```
+
+And see the results
+
+```{r}
+summary(mod_abund_Erio_nozi)
+```
+
+Here, we only see the part "Conditional model", showing the effects on abundance. There are significant effects of nutrient input and dry period on total Erio abundance: abundance is lower when there is a nutrient input (nutrient=1) and when there is a dry period (dry=1). So the effects are opposite to Sphagnum!
+
+Let's plot some of the predicted effects. 
+
+The effect of nutrient input on Erio abundance:
+
+```{r}
+plot(ggpredict(mod_abund_Erio_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("nutrient")), # For the effect of nutrient 
+     add.data=FALSE) 
+
+plot(ggpredict(mod_abund_Erio_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("nutrient")), # For the effect of nutrient 
+     add.data=TRUE) 
+
+```
+
+The effect of dry period on Erio abundance:
+
+```{r}
+plot(ggpredict(mod_abund_Erio_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("dry")), # For the effect of dry 
+     add.data=TRUE) 
+```
+
+I guess you can try this kind of models (zero-augmented / zero-inflated beta regression) for all the species you are interested in, and then you would be looking both at effects on presence/absence and on abundance. For species where you have only few absences or presences (such as Erio), I think you would only be able to look at abundance. 
+
+# Session info
+
+This just shows info on your R session, might be useful.
+
+```{r}
+sessionInfo()
+```
+
+```{r}
+
+mod_abund_Erica<-glmmTMB(Erica_prop~    # Your response variable
+                          age+temp+moist+
+                          nutrient+fire+dry,  # Independent variables
+                        family="beta_family", # Use the beta family
+                        ziformula=~.,
+                        data=data_peat)       # Your data
+```
+
+
+```{r}
+summary(mod_abund_Erica)
+```
+
+```{r}
+
+```
+
+Model 3: Ericaceae
+
+```{r}
+
+mod_abund_Erica_nozi<-glmmTMB(Erica/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data_erica<-subset(data_peat,Erica>0)) # Your data
+# Here, we use only the data where Erio_prop is larger than zero, i.e. we 
+# remove the only one case where Erio is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+
+```
+
+```{r}
+summary(mod_abund_Erica_nozi)
+nobs(mod_abund_Erica_nozi)
+
+```
+
+```{r}
+plot(ggpredict(mod_abund_Erica_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("nutrient")), # For the effect of nutrient 
+     add.data=TRUE) 
+
+plot(ggpredict(mod_abund_Erica_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("dry")), # For the effect of dry periods 
+     add.data=FALSE) 
+
+plot(ggpredict(mod_abund_Erica_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("temp")), # For the effect of dry periods 
+     add.data=TRUE) 
+
+```
+Model 4: Carex
+
+```{r}
+
+mod_abund_Carex_nozi<-glmmTMB(Carex/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data_carex<-subset(data_peat,Carex>0)) # Your data
+# Here, we use only the data where Erio_prop is larger than zero, i.e. we 
+# remove the only one case where Erio is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+summary(mod_abund_Carex_nozi)
+nobs(mod_abund_Carex_nozi)
+```
+```{r}
+plot(ggpredict(mod_abund_Carex_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("nutrient")), # For the effect of nutrient 
+     add.data=FALSE) 
+
+plot(ggpredict(mod_abund_Carex_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("dry")), # For the effect of dry periods 
+     add.data=FALSE) 
+
+plot(ggpredict(mod_abund_Carex_nozi, 
+               # This plots the predicted effect from your model
+               type="fixed",  # Plots the predicted effects for the conditional
+               # model only (i.e. effects on abundance)
+               terms=c("temp")), # For the effect of dry periods 
+     add.data=FALSE) 
+
+```
+```{r}
+data_peat$Medium<-ifelse(data_peat$Medium>99,99,data_peat$Medium)
+data_peat$Fuscum<-ifelse(data_peat$Fuscum>99,99,data_peat$Fuscum)
+```
+
+Model 5: Medium 
+
+```{r}
+
+
+mod_abund_Medium<-glmmTMB(Medium/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Medium)
+```
+
+```{r}
+# Fen factor
+mod_abund_Medium<-glmmTMB(Medium/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Medium)
+```
+
+```{r}
+# No interactions, Only NaNs
+mod_abund_Medium<-glmmTMB(Medium/100~    # Your response variable
+                               (age+temp+moist+
+                               nutrient+fire+dry)*fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,
+                          control = glmmTMBControl(rank_check = "adjust"),
+                             data=data_peat) # Your data
+
+summary(mod_abund_Medium)
+```
+
+
+Model 6: Fuscum 
+
+```{r}
+mod_abund_Fuscum<-glmmTMB(Fuscum/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Fuscum)
+```
+
+```{r}
+# No interactions worked at all here, just NaNs. Not even the +fen worked
+mod_abund_Fuscum<-glmmTMB(Fuscum/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Fuscum)
+```
+
+
+Model 7: Rubellum 
+
+```{r}
+mod_abund_Rubellum<-glmmTMB(Rubellum/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Rubellum)
+```
+
+```{r}
+# Fen factor
+mod_abund_Rubellum<-glmmTMB(Rubellum/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Rubellum)
+```
+
+```{r}
+# No interactions work fully here, a lot of NaNs
+mod_abund_Rubellum<-glmmTMB(Rubellum/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen*age,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Rubellum)
+```
+
+
+```{r}
+plot(ggpredict(mod_abund_Rubellum, type="fixed", terms="fen"))
+```
+
+
+
+Model 8: Balticum
+
+```{r}
+mod_abund_Balticum<-glmmTMB(Balticum/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Balticum)
+```
+
+
+```{r}
+# Fen factor
+mod_abund_Balticum<-glmmTMB(Balticum/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Balticum)
+```
+
+```{r}
+#No Interactions fully worked, fen*age partly worked but still produced some NaNs
+
+mod_abund_Balticum<-glmmTMB(Balticum/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen*age,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Balticum)
+```
+
+
+
+Model 9: Cuspidata
+
+```{r}
+mod_abund_Cuspidata<-glmmTMB(Cuspidata/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Cuspidata)
+```
+
+```{r}
+# Fen factor
+mod_abund_Cuspidata<-glmmTMB(Cuspidata/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Cuspidata)
+```
+
+```{r}
+# Interaction with age partly worked, all others were NaNs
+mod_abund_Cuspidata<-glmmTMB(Cuspidata/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen*age,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Cuspidata)
+```
+
+
+```{r}
+mod_abund_Austinii<-glmmTMB(Austinii/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~.,         
+                             data=data_peat) # Your data
+
+summary(mod_abund_Austinii)
+```
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum/100~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry+fen,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+summary(mod_abund_tot_Sphagnum)
+
+```
+
+
+```{r}
+# Fen factor
+
+mod_abund_Erio_nozi<-glmmTMB(Erio_prop~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Erio_prop>0)) # Your data
+# Here, we use only the data where Erio_prop is larger than zero, i.e. we 
+# remove the only one case where Erio is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+summary(mod_abund_Erio_nozi)
+
+
+
+```
+
+```{r}
+# Fen factor
+
+mod_abund_Erica_nozi<-glmmTMB(Erica_prop~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Erica_prop>0)) # Your data
+# Here, we use only the data where Erica_prop is larger than zero, i.e. we 
+# remove the only one case where Erica is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+summary(mod_abund_Erica_nozi)
+```
+
+```{r}
+# Fen factor
+
+mod_abund_Carex_nozi<-glmmTMB(Carex/100~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Carex/100>0)) # Your data
+# Here, we use only the data where Erica_prop is larger than zero, i.e. we 
+# remove the only one case where Erica is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+summary(mod_abund_Carex_nozi)
+```
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum/100~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry+fen*age,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+summary(mod_abund_tot_Sphagnum)
+```
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum/100~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry+fen*temp,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+summary(mod_abund_tot_Sphagnum)
+```
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum/100~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry+fen*moist,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+summary(mod_abund_tot_Sphagnum)
+```
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum/100~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry+fen*dry,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+summary(mod_abund_tot_Sphagnum)
+```
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum/100~    # Your response variable
+                                  (age+temp+moist+
+                                  fire+dry)*fen+nutrient,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+summary(mod_abund_tot_Sphagnum)
+```
+
+
+```{r}
+# Updated Interaction Model total Sphagnum to be plotted
+
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum/100~    # Your response variable
+                                  age+temp+moist+
+                                  nutrient+fire+dry+fen*fire,  # Independent variables
+                                family="beta_family", # Use the beta family
+                                ziformula=~.,
+                                data=data_peat)       # Your data
+
+summary(mod_abund_tot_Sphagnum)
+```
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, type= "zi_prob", terms=c("fen","fire")))
+```
+
+```{r}
+plot(ggpredict(mod_abund_tot_Sphagnum, type="fixed", terms="fen"))
+```
+
+
+```{r}
+mod_abund_Erio_nozi<-glmmTMB(Erio_prop~    # Your response variable
+                               (age+temp+moist+
+                               fire+dry)*fen+nutrient,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Erio_prop>0)) # Your data
+# Here, we use only the data where Erio_prop is larger than zero, i.e. we 
+# remove the only one case where Erio is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+summary(mod_abund_Erio_nozi)
+```
+
+```{r}
+plot(ggpredict(mod_abund_Erio_nozi, type="fixed", terms="fen"))
+```
+
+```{r}
+mod_abund_Erica_nozi<-glmmTMB(Erica_prop~    # Your response variable
+                               (age+temp+moist+
+                               fire+dry)*fen+nutrient,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Erica_prop>0)) # Your data
+# Here, we use only the data where Erica_prop is larger than zero, i.e. we 
+# remove the only one case where Erica is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+summary(mod_abund_Erica_nozi)
+```
+
+
+```{r}
+# Updated Interaction Model Erica to be plotted
+
+mod_abund_Erica_nozi<-glmmTMB(Erica_prop~    # Your response variable
+                               age+temp+moist+
+                               nutrient+fire+dry+fen*fire,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Erica_prop>0)) # Your data
+# Here, we use only the data where Erica_prop is larger than zero, i.e. we 
+# remove the only one case where Erica is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+summary(mod_abund_Erica_nozi)
+
+```
+```{r}
+plot(ggpredict(mod_abund_Erica_nozi, type="fixed", terms=c("fen", "fire"))) 
+```
+
+
+
+```{r}
+mod_abund_Carex_nozi<-glmmTMB(Carex/100~    # Your response variable
+                               (age+temp+moist+
+                               fire+dry)*fen+nutrient,  # Independent variables
+                             family="beta_family", # Use the beta family
+                             ziformula=~0,         # no zero-inflation
+                             data=subset(data_peat,Carex/100>0)) # Your data
+# Here, we use only the data where Erica_prop is larger than zero, i.e. we 
+# remove the only one case where Erica is absent, and look at effects
+# on the abundance only (not presence/absence)
+
+summary(mod_abund_Carex_nozi)
+```
+
