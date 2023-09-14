@@ -1233,7 +1233,7 @@ row.names(vectors.long3)<-c("Age","Temperature","Moisture","Nutrient input = 1",
 
 
 ```{r}
-figure1 <- ggplot() + 
+figure1_a <- ggplot() + 
   geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
   geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
   xlab("Axis 1 (14.1%)") + ylab("Axis 2 (6.4%)") +  
@@ -1277,12 +1277,23 @@ figure1 <- ggplot() +
                       label=rownames(vectors.long3[6,])), 
             cex=3,direction="both",segment.size=0.25,color="black",
             family="serif") +
-  coord_fixed(ratio=1)+my_theme()
-figure1
+  my_theme()
+figure1_b<-ggplot(data.frame(hierpart1$Hier.part)%>%
+         rownames_to_column(var="variable")%>%
+         mutate(variable=c("Age","Temperature","Moisture",
+                           "Nutrient input","Fire","Dry period"))%>%
+         mutate(variable=factor(variable,
+                                levels=c("Age","Temperature","Moisture",
+                                         "Nutrient input","Fire","Dry period"))),
+       aes(x=variable,y=I.perc...))+geom_bar(stat = "identity")+
+  my_theme()+xlab(NULL)+ylab("Individual effect to R square (%)")
+figure1<-plot_grid(figure1_a,figure1_b,ncol=2,labels=c("A)","B)"),
+                   label_fontfamily="serif",align="hv")
+figure1  
 ggsave(filename="output/figures/figure1.tiff",plot=figure1,
-       width=25,height=17,units="cm",dpi=300)
+       width=24,height=12,units="cm",dpi=300)
 ggsave(filename="output/figures/figure1.pdf",plot=figure1,
-       width=25,height=17,units="cm",dpi=300)
+       width=24,height=12,units="cm",dpi=300)
 ```
 
 
