@@ -1296,7 +1296,6 @@ ggsave(filename="output/figures/figure1.pdf",plot=figure1,
        width=24,height=12,units="cm",dpi=300)
 ```
 
-
 ## Figure 2: Plant groups
 
 ```{r}
@@ -1426,69 +1425,15 @@ figure2<-plot_grid(
   nrow=2)
 figure2
 ggsave(filename="output/figures/figure2.tiff",plot=figure2,
-       width=26,height=20,units="cm",dpi=300)
+       width=28,height=21,units="cm",dpi=300)
 ggsave(filename="output/figures/figure2.pdf",plot=figure2,
-       width=24,height=24,units="cm",dpi=300)
+       width=28,height=21,units="cm",dpi=300)
 ```
 
-## Figure 3: Selected Sphagnum species: Medium and Fuscum
+## Figure 3: Selected Sphagnum species: Fuscum and Rubellum
 
 ```{r}
-figure3_a<-ggarrange(
-  ggplot()+
-    geom_ribbon(data=average_prediction_Medium_age,
-                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
-                alpha=0.2)+
-    geom_line(data=average_prediction_Medium_age,
-              aes(x=x,y=1-predicted))+
-    geom_point(data=data_peat,aes(x=age,y=Medium_prop),
-              size=3,alpha=0.3,shape=16,color="darkturquoise")+
-    my_theme()+xlab("Age")+ylab("Probability of Medium presence")+
-    theme(plot.margin=margin(l = 5,t=10,b=10)),nrow = 1)
-figure3_b_1<-ggplot()+
-  geom_jitter(data=data_peat,aes(x=nutrient,y=Medium_prop),
-              position = position_jitter(0.1,0.01),
-              size=3,alpha=0.3,shape=16,color="darkturquoise")+
-  geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
-                                         type="fixed",terms=c("nutrient"))),
-             aes(x=x,y=predicted),size=4,shape=16)+
-  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
-                                          type="fixed",terms=c("nutrient"))),
-                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
-                width=0.2,size=0.5)+
-  my_theme()+xlab("Nutrient input")+ylab("Medium abundance")+
-  theme(plot.margin = margin(l=10,r = 5,t=10,b=10))
-figure3_b_2<-ggplot()+
-  geom_jitter(data=data_peat,aes(x=fire,y=Medium_prop),
-              position = position_jitter(0.1,0.01),
-              size=3,alpha=0.3,shape=16,color="darkturquoise")+
-  geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
-                                       type="fixed",terms=c("fire"))),
-             aes(x=x,y=predicted),size=4,shape=16)+
-  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
-                                          type="fixed",terms=c("fire"))),
-                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
-                width=0.2,size=0.5)+
-  my_theme()+xlab("Fire")+ylab("Medium abundance")+
-  theme(axis.text.y = element_blank(),
-        axis.title.y = element_blank(),
-        plot.margin = margin(r = 10, l = 5,t=10,b=10))
-figure3_b_3<-ggplot()+
-  geom_jitter(data=data_peat,aes(x=dry,y=Medium_prop),
-              position = position_jitter(0.1,0.01),
-              size=3,alpha=0.3,shape=16,color="darkturquoise")+
-  geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
-                                       type="fixed",terms=c("dry"))),
-             aes(x=x,y=predicted),size=4,shape=16)+
-  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
-                                          type="fixed",terms=c("dry"))),
-                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
-                width=0.2,size=0.5)+
-  my_theme()+xlab("Dry period")+ylab("Medium abundance")+
-  theme(axis.text.y = element_blank(),
-        axis.title.y = element_blank(),
-        plot.margin = margin(r = 10, l = 5,t=10,b=10))
-figure3_c_1<-ggplot()+
+figure3_a_1<-ggplot()+
     geom_ribbon(data=average_prediction_Fuscum_moist,
                 aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
                 alpha=0.2)+
@@ -1498,7 +1443,7 @@ figure3_c_1<-ggplot()+
               size=3,alpha=0.3,shape=16,color="darkturquoise")+
     my_theme()+xlab("Moisture")+ylab("Probability of Fuscum presence")+
   theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
-figure3_c_2<-ggplot()+
+figure3_a_2<-ggplot()+
     geom_jitter(data=data_peat,aes(x=nutrient,y=Fuscum_prop),
                 position=position_jitter(0.1,0.01),
                 size=3,alpha=0.3,shape=16,color="darkturquoise")+
@@ -1511,7 +1456,7 @@ figure3_c_2<-ggplot()+
   theme(axis.text.y = element_blank(),
             axis.title.y = element_blank(),
             plot.margin = margin(r = 10, l = 5,t=10,b=10))
-figure3_d_1<-ggplot()+
+figure3_b_1<-ggplot()+
     geom_ribbon(data=data.frame(ggemmeans(mod_abund_Fuscum,
                                           type="fixed",terms=c("age"))),
                                 aes(x=x,y=predicted,
@@ -1523,7 +1468,7 @@ figure3_d_1<-ggplot()+
               size=3,alpha=0.3,shape=16,color="darkturquoise")+
     my_theme()+xlab("Age")+ylab("Fuscum abundance")+
   theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
-figure3_d_2<-ggplot()+
+figure3_b_2<-ggplot()+
     geom_jitter(data=data_peat,aes(x=dry,y=Fuscum_prop),
                 position = position_jitter(0.1,0.01),
                 size=3,alpha=0.3,shape=16,color="darkturquoise")+
@@ -1538,36 +1483,7 @@ figure3_d_2<-ggplot()+
   theme(axis.text.y = element_blank(),
             axis.title.y = element_blank(),
             plot.margin = margin(r = 10, l = 5,t=10,b=10))
-```
-
-
-```{r}
-figure3_b<-ggarrange(figure3_b_1,figure3_b_2,figure3_b_3,nrow=1)
-figure3_c<-ggarrange(figure3_c_1,figure3_c_2,nrow=1)
-figure3_d<-ggarrange(figure3_d_1,figure3_d_2,nrow=1)
-```
-
-```{r}
-figure3<-plot_grid(
-  plot_grid(figure3_a,figure3_b,ncol=2,labels=c("A)","B)"),
-            label_fontfamily="serif",rel_widths=c(0.3,0.7))+
-    theme(plot.background=element_rect(fill="white", color = NA)),
-  plot_grid(figure3_c,figure3_d,ncol=2,labels=c("C)","D)"),
-            label_fontfamily="serif")+
-    theme(plot.background=element_rect(fill="white", color = NA)),
-  nrow=2)
-figure3
-ggsave(filename="output/figures/figure3.tiff",plot=figure3,
-       width=26,height=20,units="cm",dpi=300)
-ggsave(filename="output/figures/figure3.pdf",plot=figure3,
-       width=24,height=24,units="cm",dpi=300)
-```
-
-
-## Figure 4: Selected Sphagnum species: Rubellum and Balticum
-
-```{r}
-figure4_a_1<-ggplot()+
+figure3_c_1<-ggplot()+
     geom_jitter(data=data_peat,aes(x=nutrient,y=Rubellum_prop),
                 position=position_jitter(0.1,0.01),
                 size=3,alpha=0.3,shape=16,color="darkturquoise")+
@@ -1578,7 +1494,7 @@ figure4_a_1<-ggplot()+
                width=0.2,size=0.5)+
     my_theme()+xlab("Nutrient")+ylab("Probability of Rubellum presence")+
   theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
-figure4_a_2<-ggplot()+
+figure3_c_2<-ggplot()+
     geom_jitter(data=data_peat,aes(x=dry,y=Rubellum_prop),
                 position=position_jitter(0.1,0.01),
                 size=3,alpha=0.3,shape=16,color="darkturquoise")+
@@ -1587,11 +1503,11 @@ figure4_a_2<-ggplot()+
     geom_errorbar(data=average_prediction_Rubellum_dry,
                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
                width=0.2,size=0.5)+
-    my_theme()+xlab("Dry")+ylab("Probability of Rubellum presence")+
+    my_theme()+xlab("Dry period")+ylab("Probability of Rubellum presence")+
   theme(axis.text.y = element_blank(),
             axis.title.y = element_blank(),
             plot.margin = margin(r = 10, l = 5,t=10,b=10))
-figure4_b<-ggplot()+
+figure3_d<-ggplot()+
     geom_jitter(data=data_peat,aes(x=fire,y=Rubellum_prop),
                 position = position_jitter(0.1,0.01),
                 size=3,alpha=0.3,shape=16,color="darkturquoise")+
@@ -1603,7 +1519,89 @@ figure4_b<-ggplot()+
                   aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
                   width=0.2,size=0.5)+
     my_theme()+xlab("Fire")+ylab("Rubellum abundance")+
-  theme(plot.margin=margin(l = 5,t=10,b=10))
+  theme(plot.margin=margin(r = 10,l = 5,t=10,b=10))
+```
+
+
+```{r}
+figure3_a<-ggarrange(figure3_a_1,figure3_a_2,nrow=1)
+figure3_b<-ggarrange(figure3_b_1,figure3_b_2,nrow=1)
+figure3_c<-ggarrange(figure3_c_1,figure3_c_2,nrow=1)
+```
+
+```{r}
+figure3<-plot_grid(
+  plot_grid(figure3_a,figure3_b,ncol=2,labels=c("A)","B)"),
+            label_fontfamily="serif")+
+    theme(plot.background=element_rect(fill="white", color = NA)),
+  plot_grid(figure3_c,figure3_d,ncol=2,labels=c("C)","D)"),
+            label_fontfamily="serif",rel_widths=c(0.64,0.36))+
+    theme(plot.background=element_rect(fill="white", color = NA)),
+  nrow=2)
+figure3
+ggsave(filename="output/figures/figure3.tiff",plot=figure3,
+       width=28,height=21,units="cm",dpi=300)
+ggsave(filename="output/figures/figure3.pdf",plot=figure3,
+       width=28,height=21,units="cm",dpi=300)
+```
+
+## Figure 4: Selected Sphagnum species: Medium and Balticum
+
+```{r}
+figure4_a<-ggarrange(
+  ggplot()+
+    geom_ribbon(data=average_prediction_Medium_age,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                alpha=0.2)+
+    geom_line(data=average_prediction_Medium_age,
+              aes(x=x,y=1-predicted))+
+    geom_point(data=data_peat,aes(x=age,y=Medium_prop),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    my_theme()+xlab("Age")+ylab("Probability of Medium presence")+
+    theme(plot.margin=margin(l = 5,t=10,b=10)),nrow = 1)
+figure4_b_1<-ggplot()+
+  geom_jitter(data=data_peat,aes(x=nutrient,y=Medium_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                         type="fixed",terms=c("nutrient"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                          type="fixed",terms=c("nutrient"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Nutrient input")+ylab("Medium abundance")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10))
+figure4_b_2<-ggplot()+
+  geom_jitter(data=data_peat,aes(x=fire,y=Medium_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                       type="fixed",terms=c("fire"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                          type="fixed",terms=c("fire"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Fire")+ylab("Medium abundance")+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure4_b_3<-ggplot()+
+  geom_jitter(data=data_peat,aes(x=dry,y=Medium_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                       type="fixed",terms=c("dry"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                          type="fixed",terms=c("dry"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Dry period")+ylab("Medium abundance")+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
 figure4_c<-ggplot()+
     geom_ribbon(data=average_prediction_Balticum_age,
                 aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
@@ -1640,28 +1638,27 @@ figure4_d_2<-ggplot()+
   theme(axis.text.y = element_blank(),
             axis.title.y = element_blank(),
             plot.margin = margin(r = 10, l = 5,t=10,b=10))
-
 ```
 
 ```{r}
-figure4_a<-ggarrange(figure4_a_1,figure4_a_2,figure3_b_3,nrow=1)
+figure4_b<-ggarrange(figure4_b_1,figure4_b_2,figure4_b_3,nrow=1)
 figure4_d<-ggarrange(figure4_d_1,figure4_d_2,nrow=1)
 ```
 
 ```{r}
 figure4<-plot_grid(
   plot_grid(figure4_a,figure4_b,ncol=2,labels=c("A)","B)"),
-            label_fontfamily="serif",rel_widths=c(0.7,0.3))+
+            label_fontfamily="serif",rel_widths=c(0.3,0.7))+
     theme(plot.background=element_rect(fill="white", color = NA)),
   plot_grid(figure4_c,figure4_d,ncol=2,labels=c("C)","D)"),
-            label_fontfamily="serif",rel_widths=c(0.3,0.7))+
+            label_fontfamily="serif",rel_widths=c(0.35,0.65))+
     theme(plot.background=element_rect(fill="white", color = NA)),
   nrow=2)
 figure4
 ggsave(filename="output/figures/figure4.tiff",plot=figure4,
-       width=26,height=20,units="cm",dpi=300)
+       width=28,height=21,units="cm",dpi=300)
 ggsave(filename="output/figures/figure4.pdf",plot=figure4,
-       width=24,height=24,units="cm",dpi=300)
+       width=28,height=21,units="cm",dpi=300)
 ```
 
 ## Figure 5: interactions
