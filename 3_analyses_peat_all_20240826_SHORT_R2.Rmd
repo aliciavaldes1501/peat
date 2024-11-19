@@ -1,0 +1,386 @@
+---
+title: Analyses of species distributions in peatlands - SHORT
+author: "Alicia Valdés"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+  html_document:
+    toc: yes
+    toc_depth: '4'
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+options(tibble.width = Inf)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+# Load the R packages that you will use
+
+If you do not have the R packages installed, you need to install them. 
+
+```{r load packages}
+library(readxl)
+library(tidyverse)
+library(glmmTMB)
+library(performance)
+```
+
+# Data preparation
+
+## Read data from Excel file
+
+Note that you need to change the path to the folder where you have the Excel file
+
+```{r}
+data_peat<-read_excel("data/edited/Modelling_SDM_species_data.xlsx",
+                      sheet="SDM Data")
+```
+
+## Have a look at the data
+
+This shows the first rows of your data file in "tibble" format. You can also see the variable type for each variable (double or character).
+
+```{r}
+data_peat
+```
+
+## Convert some variables to factors
+
+It is better to convert some variables (those that are Y/N or 0/1) to factors.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(fen=as.factor(fen),imp_temp=as.factor(imp_temp),
+         nutrient=as.factor(nutrient),fire=as.factor(fire),dry=as.factor(dry)) 
+# with mutate you create new variables that are equal to the old variables
+# but are coded as factors
+```
+
+## Convert moist to numeric
+
+For some reason, moist appears as a character variable. It should be numeric, so we convert it.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(moist=as.numeric(moist))
+```
+
+# Abundance models (zero-inflated beta regressions)
+
+Showing only models without interactions, and with temperature (as used in the main text)
+
+## Plant groups
+
+Abundance of Medium and Fuscum includes 0 and 100 - change 100 to 99.
+
+```{r}
+data_peat$Medium<-ifelse(data_peat$Medium>99,99,data_peat$Medium)
+data_peat$Fuscum<-ifelse(data_peat$Fuscum>99,99,data_peat$Fuscum)
+```
+
+Convert variables to proportions (from 0 to 1) instead of percentages:
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(tot_Sphagnum_prop=tot_Sphagnum/100,
+         Erio_prop=Erio/100,
+         Erica_prop=Erica/100,
+         Carex_prop=Carex/100,
+         Medium_prop=Medium/100,
+         Fuscum_prop=Fuscum/100,
+         Rubellum_prop=Rubellum/100,
+         Balticum_prop=Balticum/100,
+         Cuspidata_prop=Cuspidata/100)
+```
+
+### Models
+
+```{r}
+mod_abund_tot_Sphagnum_temp<-glmmTMB(tot_Sphagnum_prop~temp+moist+nutrient+
+                                  fire+dry,family="beta_family",
+                                ziformula=~.,data=data_peat) 
+mod_abund_Erio_nozi_temp<-glmmTMB(Erio_prop~temp+moist+nutrient+
+                               fire+dry,family="beta_family",
+                             ziformula=~0,data=subset(data_peat,Erio_prop>0))
+mod_abund_Erica_nozi_temp<-glmmTMB(Erica_prop~temp+moist+nutrient+
+                                fire+dry,family="beta_family", 
+                              ziformula=~0, data=subset(data_peat,Erica_prop>0))
+mod_abund_Carex_nozi_temp<-glmmTMB(Carex_prop~temp+moist+nutrient+
+                                fire+dry,family="beta_family",
+                              ziformula=~0,data=subset(data_peat,Carex_prop>0))
+```
+
+### R2
+
+For the zero-inflated models, you can use the function "r2_zeroinflated", or directly use "r2" for all, as this will return the most appropriate R2 for the given model (i.e. the  R2 for models with zero-inflation component in this case).
+
+For models with no zero inflation, if you use the "r2" function, it returns the Ferrari's R2 (you can also get it using the function "r2_ferrari"). I had never heard about this R2, but there is a reference in the R documentation:
+Ferrari, S., and Cribari-Neto, F. (2004). Beta Regression for Modelling Rates and Proportions. Journal of Applied Statistics, 31(7), 799–815. doi:10.1080/0266476042000214501.
+
+Next to each function, I have written as a comment the value that I get. Please check if you get the same value! You mentioned in your email that you got much higher values (around 0.9 or even 1, which are not what I get!). Getting these lower values does not mean that models do not work well, it is quite unusual to get R2 values of 0.9, or even larger than 0.5 I would say, so values of 0.2-0.4, or even lower seem quite OK.
+
+```{r}
+r2_zeroinflated(mod_abund_tot_Sphagnum_temp) 
+# R2 for Zero-Inflated and Hurdle Regression
+# R2: 0.374
+# adj. R2: 0.337
+r2(mod_abund_Erio_nozi_temp) # Ferrari's R2: 0.274
+r2(mod_abund_Erica_nozi_temp) #  Ferrari's R2: 0.173
+r2(mod_abund_Carex_nozi_temp) #  Ferrari's R2: 0.316
+```
+
+## Selected Sphagnum species
+
+### Models
+
+```{r}
+mod_abund_Medium_temp<-glmmTMB(Medium_prop~temp+moist+
+                            nutrient+fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_temp<-glmmTMB(Fuscum_prop~temp+moist+
+                            nutrient+fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_temp<-glmmTMB(Rubellum_prop~temp+moist+
+                              nutrient+fire+dry,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Balticum_temp<-glmmTMB(Balticum_prop~temp+moist+
+                              nutrient+fire+dry,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Cuspidata_temp<-glmmTMB(Cuspidata_prop~temp+moist+
+                               nutrient+fire+dry,family="beta_family",
+                             ziformula=~.,data=data_peat) 
+```
+
+### R2
+
+```{r}
+r2_zeroinflated(mod_abund_Medium_temp)
+# R2 for Zero-Inflated and Hurdle Regression
+# R2: 0.158
+# adj. R2: 0.096
+r2_zeroinflated(mod_abund_Fuscum_temp)
+# R2 for Zero-Inflated and Hurdle Regression
+# R2: 0.466
+# adj. R2: 0.427
+r2_zeroinflated(mod_abund_Rubellum_temp)
+# R2 for Zero-Inflated and Hurdle Regression
+# R2: 0.368
+# adj. R2: 0.321
+r2_zeroinflated(mod_abund_Balticum_temp) 
+# R2 for Zero-Inflated and Hurdle Regression
+# R2: 0.329
+# adj. R2: 0.279
+r2_zeroinflated(mod_abund_Cuspidata_temp)
+# R2 for Zero-Inflated and Hurdle Regression
+# R2: 0.047
+# adj. R2: -0.024
+# Here, I am not sure what a negative value means for the adjusted R-square. 
+# After some quick search in Google, it seems that it just might mean that the
+# model is a poor fit. See these two links (but maybe worth looking it up a bit more)
+# https://stats.stackexchange.com/questions/483582/how-to-interpret-a-negative-adjusted-r-squared
+# https://stats.stackexchange.com/questions/34751/is-it-a-problem-to-get-a-negative-adjusted-r-squared
+```
+
+# Temporal autocorrelation
+
+## Tests for temporal autocorrelation in residuals
+
+```{r}
+library(DHARMa)
+```
+
+### Plant groups
+
+```{r}
+testTemporalAutocorrelation(simulateResiduals(mod_abund_tot_Sphagnum_temp),
+                            subset(data_peat,
+                                   !is.na(tot_Sphagnum_prop)&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+testTemporalAutocorrelation(simulateResiduals(mod_abund_Erio_nozi_temp),
+                            subset(data_peat,
+                                   Erio_prop>0&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+testTemporalAutocorrelation(simulateResiduals(mod_abund_Erica_nozi_temp),
+                            subset(data_peat,
+                                   Erica_prop>0&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+testTemporalAutocorrelation(simulateResiduals(mod_abund_Carex_nozi_temp),
+                            subset(data_peat,
+                                   Carex_prop>0&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+```
+
+Durbin-Watson test shows significant temporal autocorrelation in all models.
+
+### Selected Sphagnum species
+
+```{r}
+testTemporalAutocorrelation(simulateResiduals(mod_abund_Medium_temp),
+                            subset(data_peat,
+                                   !is.na(Medium_prop)&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+testTemporalAutocorrelation(simulateResiduals(mod_abund_Fuscum_temp),
+                            subset(data_peat,
+                                   !is.na(Fuscum_prop)&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+testTemporalAutocorrelation(simulateResiduals(mod_abund_Rubellum_temp),
+                            subset(data_peat,
+                                   !is.na(Rubellum_prop)&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+testTemporalAutocorrelation(simulateResiduals(mod_abund_Balticum_temp),
+                            subset(data_peat,
+                                   !is.na(Balticum_prop)&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+testTemporalAutocorrelation(simulateResiduals(mod_abund_Cuspidata_temp),
+                            subset(data_peat,
+                                   !is.na(Cuspidata_prop)&!is.na(temp)&
+                                     !is.na(moist)&!is.na(nutrient)&
+                                     !is.na(fire)&!is.na(dry))$age, plot = T)
+```
+
+Durbin-Watson test shows no significant temporal autocorrelation in any of the models.
+
+## AR models for plant groups
+
+Models including an autoregressive covariance structure (AR(1)), see:
+https://cran.r-project.org/web/packages/glmmTMB/vignettes/covstruct.html
+https://www.flutterbys.com.au/stats/tut/tut8.3a.html
+
+Create daeta with no NAs and times and group variables:
+
+```{r}
+data_peat_noNapredictors<-subset(data_peat,!is.na(temp)&!is.na(moist)&
+                                   !is.na(nutrient)&!is.na(fire)&!is.na(dry))
+times <- factor(data_peat_noNapredictors$age)
+group <- factor(rep(1,108))
+
+dat0 <- data.frame(tot_Sphagnum_prop=data_peat_noNapredictors$tot_Sphagnum_prop,
+                   Erio_prop=data_peat_noNapredictors$Erio_prop,
+                   Erica_prop=data_peat_noNapredictors$Erica_prop,
+                   Carex_prop=data_peat_noNapredictors$Carex_prop,
+                   temp=data_peat_noNapredictors$temp,
+                   age=data_peat_noNapredictors$age,
+                   moist=data_peat_noNapredictors$moist,
+                   nutrient=data_peat_noNapredictors$nutrient,
+                   fire=data_peat_noNapredictors$fire,
+                   dry=data_peat_noNapredictors$dry,
+                   times, group)
+
+data_peat_noNapredictors_Erica<-subset(data_peat_noNapredictors,Erica_prop>0)
+times_Erica <- factor(data_peat_noNapredictors_Erica$age)
+group_Erica <- factor(rep(1,107))
+
+dat0_Erica <- data.frame(tot_Sphagnum_prop=subset(data_peat_noNapredictors,
+                                                  Erica_prop>0)$tot_Sphagnum_prop,
+                   Erio_prop=subset(data_peat_noNapredictors,
+                                    Erica_prop>0)$Erio_prop,
+                   Erica_prop=subset(data_peat_noNapredictors,
+                                     Erica_prop>0)$Erica_prop,
+                   Carex_prop=subset(data_peat_noNapredictors,
+                                     Erica_prop>0)$Carex_prop,
+                   temp=subset(data_peat_noNapredictors,
+                               Erica_prop>0)$temp,
+                   age=subset(data_peat_noNapredictors,
+                              Erica_prop>0)$age,
+                   moist=subset(data_peat_noNapredictors,
+                                Erica_prop>0)$moist,
+                   nutrient=subset(data_peat_noNapredictors,
+                                   Erica_prop>0)$nutrient,
+                   fire=subset(data_peat_noNapredictors,
+                               Erica_prop>0)$fire,
+                   dry=subset(data_peat_noNapredictors,
+                              Erica_prop>0)$dry,
+                   times_Erica, group_Erica)
+```
+
+Fit AR models:
+
+```{r}
+mod_abund_tot_Sphagnum_temp_AR<-glmmTMB(tot_Sphagnum_prop~temp+moist+nutrient+
+                                          fire+dry+ar1(times+0|group),
+                                        family="beta_family",
+                                        ziformula=~.,
+                                        data=data_peat_noNapredictors) 
+mod_abund_Erio_nozi_temp_AR<-glmmTMB(Erio_prop~temp+moist+nutrient+
+                                       fire+dry+ar1(times+0|group),
+                                     family="beta_family",
+                                     ziformula=~0,
+                                     data=data_peat_noNapredictors,
+                                      control=glmmTMBControl(optimizer=optim,
+                                                             optArgs=list(method="BFGS")))
+mod_abund_Erica_nozi_temp_AR<-glmmTMB(Erica_prop~temp+moist+nutrient+
+                                        fire+dry+ar1(times_Erica+0|group_Erica),
+                                      family="beta_family", 
+                                      ziformula=~0, 
+                                      data=dat0_Erica)
+mod_abund_Carex_nozi_temp_AR<-glmmTMB(Carex_prop~temp+moist+nutrient+
+                                        fire+dry+ar1(times+0|group),
+                                      family="beta_family",
+                                      ziformula=~0,
+                                      data=data_peat_noNapredictors)
+```
+
+### Comparing original and AR models
+
+```{r}
+summary(mod_abund_tot_Sphagnum_temp)
+summary(mod_abund_tot_Sphagnum_temp_AR)
+```
+
+```{r}
+summary(mod_abund_Erio_nozi_temp)
+summary(mod_abund_Erio_nozi_temp_AR)
+```
+
+```{r}
+summary(mod_abund_Erica_nozi_temp)
+summary(mod_abund_Erica_nozi_temp_AR)
+```
+
+```{r}
+summary(mod_abund_Carex_nozi_temp)
+summary(mod_abund_Carex_nozi_temp_AR)
+```
+
+# HERE: Ordination
+
+Use partial constrained ordination, where you include time as a covariate that you "partial out" to control for its effect, thus focusing on the variation that is not explained by time:
+
+```{r}
+ordination<-capscale(data_ordi2[10:21]~ # species data matrix
+                       temp+moist+nutrient+fire+dry+Condition(age), # Environmental variables
+                     data = data_ordi2, distance="bray") # Bray-Curtis distance
+```
+
+```{r}
+vegan::ordiplot(ordination,display = c('species', 'sites', 'bp'))
+orditorp(ordination,display="species",cex=0.8,col="red")
+```
+
+```{r}
+anova (ordination, by = 'margin', permutations = 999)
+```
+
+Repeat hierarchical partitioning, etc. 
+
+
+
+# Session info
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,3375 @@
+---
+title: Analyses of species distributions in peatlands
+author: "Alicia Valdés"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+  html_document:
+    toc: yes
+    toc_depth: '4'
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+options(tibble.width = Inf)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r Define ggplot themes and palettes, include=FALSE}
+my_theme <- function(){
+  theme_base()+theme(plot.background=element_rect(fill="white", colour=NA))+
+  theme(legend.position="none")+theme(text=element_text(family="serif"))+
+  theme(plot.title = element_text(hjust =-0.06))
+}
+my_theme_legend <- function(){
+  theme_base()+theme(plot.background=element_rect(fill="white", colour=NA))+
+  theme(text=element_text(family="serif"))+
+  theme(plot.title = element_text(hjust =-0.06))
+}
+```
+
+# Load the R packages that you will use
+
+If you do not have the R packages installed, you need to install them. 
+
+```{r load packages}
+library(tidyverse)
+library(readxl)
+library(knitr)
+library(ggeffects)
+library(car)
+library(glmmTMB)
+library(ggplot2)
+library(vegan)
+library(rdacca.hp)
+library(gridExtra)
+library(ggthemes)
+library(egg)
+library(cowplot)
+library(BiodiversityR)
+library(ggrepel)
+library(performance)
+library(sjPlot)
+```
+
+# Data preparation
+
+## Read data from Excel file
+
+Note that you need to change the path to the folder where you have the Excel file
+
+```{r}
+data_peat<-read_excel("data/edited/Modelling_SDM_species_data.xlsx",
+                      sheet="SDM Data")
+```
+
+## Have a look at the data
+
+This shows the first rows of your data file in "tibble" format. You can also see the variable type for each variable (double or character).
+
+```{r}
+data_peat
+```
+
+## Convert some variables to factors
+
+It is better to convert some variables (those that are Y/N or 0/1) to factors.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(fen=as.factor(fen),imp_temp=as.factor(imp_temp),
+         nutrient=as.factor(nutrient),fire=as.factor(fire),dry=as.factor(dry)) 
+# with mutate you create new variables that are equal to the old variables
+# but are coded as factors
+```
+
+## Convert moist to numeric
+
+For some reason, moist appears as a character variable. It should be numeric, so we convert it.
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(moist=as.numeric(moist))
+```
+
+# Ordinations (vegan package)
+
+Suggested reading: https://www.davidzeleny.net/anadat-r/doku.php/en:ordination
+
+(lots of info on this webpage!)
+
+Chapter 10 in this pdf: https://apps.worldagroforestry.org/downloads/Publications/PDFS/b13695.pdf
+
+Using the vegan package.
+
+I performed some ordinations with Sphagnum species. I tried different methods, but if I would need to choose one, I would do a constrained ordination, specifically a Distance-based redundancy analysis (db-RDA) with Bray-Curtis distance. You can read about all types in the webpage above if you feel like it. 
+
+Data for ordination: 
+
+```{r}
+data_ordi2<-data_peat %>%
+  filter_at(vars(Balticum:Fallax), 
+            all_vars(!is.na(.)))%>% # Remove rows with all NAs
+  filter_at(vars(Balticum:Fallax),
+            any_vars(.>0))%>% # Remove rows with all zeros - WHY?
+  filter(!is.na(age)&!is.na(temp)&!is.na(moist)&!is.na(nutrient)&!is.na(fire)&
+           !is.na(dry))%>% # Remove rows with NA in predictors
+  rename(Deformed_Acutifolia=`Diseased Acutifolia`) #Rename to avoid problems
+```
+
+Distance-based redundancy analysis (db-RDA) with Bray-Curtis distance.
+
+See https://www.davidzeleny.net/anadat-r/doku.php/en:similarity for info on distances.
+
+## APPENDICES: Wtih temperature and age
+
+Calculate ordination:
+
+```{r}
+ordi6<-capscale(data_ordi2[10:21]~ # species data matrix
+             age+temp+moist+nutrient+fire+dry, # Environmental variables
+             data = data_ordi2, distance="bray") # Bray-Curtis distance
+
+```
+
+Result of the ordination:
+
+```{r}
+ordi6
+```
+
+"Intertia" is the total variance - your environmental variables explain 0.2704 of this variance ("constrained" part).
+
+Proportion explained by each ordination axis. CAP1-CAP6 are the "constrained" axes, explained by your environmental variables. MDS1-MDS34 are the "unconstrained" axes.
+
+```{r}
+eigenvals(ordi6) %>%
+  summary()
+```
+
+Barplot of percentage variance explained by individual axes
+
+```{r}
+expl_var_ordi6 <- c(ordi6$CCA$eig/ordi6$tot.chi*100, 
+                    ordi6$CA$eig/ordi6$tot.chi*100)
+barplot (expl_var_ordi6, col = c(rep ('red', 
+                                      length (ordi6$CCA$eig/ordi6$tot.chi*100)), 
+                                 rep ('black', 
+                                      length (ordi6$CA$eig/ordi6$tot.chi*100))),
+         las = 2, ylab = '% variation')
+```
+
+Plot of the ordination (species in red and sites-samples in black):
+
+```{r fig.height=6, fig.width=6}
+vegan::ordiplot(ordi6,display = c('species', 'sites', 'bp'))
+orditorp(ordi6,display="species",cex=0.8,col="red")
+```
+
+This shows the two first constrained axes of the ordination. You can see how the sites and species distribute along these axes.
+
+Test significance of the ordination with Monte Carlo permutation test.
+
+For the whole model:
+
+```{r}
+anova (ordi6, permutations = 999) 
+```
+
+The model is significant.
+
+For each explanatory variable (with all the others used as covariables, independently from their order in the model):
+
+```{r}
+anova (ordi6, by = 'margin', permutations = 999)
+```
+
+Age, moist, nutrient and dry show significant effects.
+
+For each axis:
+
+```{r}
+anova (ordi6, by = 'axis', permutations = 999)
+```
+
+Axis 1 and 2 are significant.
+
+Ordination plot with ggplot2.
+
+Install ggord package (you only need to do this once):
+
+```{r}
+# Enable the r-universe repo
+options(repos = c(
+    fawda123 = 'https://fawda123.r-universe.dev',
+    CRAN = 'https://cloud.r-project.org'))
+
+# Install ggord
+install.packages('ggord')
+```
+
+Load ggord package:
+
+```{r}
+library(ggord)
+```
+
+
+```{r}
+ggord(ordi6,ptslab=T,repel=T,labcol="red",veccol="red",size=NA,addsize=3,
+      xlims=c(-1.1,1.1),ylims=c(-1.1,1.1))+
+  geom_point(size=3,shape=20,color="black",alpha=0.2)
+```
+
+### Hierarchical partitioning
+
+```{r}
+dist_matrix<-vegdist(data_ordi2[10:21],method="bray")
+```
+
+```{r}
+hierpart1<-rdacca.hp(dist_matrix,data_ordi2[c(23:24,26:29)],method = "dbRDA",
+          type ="adjR2",scale = F,add = T,sqrt.dist = T)
+hierpart1
+plot(hierpart1,plot.perc=T)
+```
+
+```{r}
+cor(data_ordi2[c(23:24)]) # Correlation among age and temp is 0.762
+vif.cca(ordi6)
+# But VIF of the ordination is not super high, probably ok to keep both
+```
+
+## MAIN TEXT: Wtih temperature
+
+Calculate ordination:
+
+```{r}
+ordi_temp<-capscale(data_ordi2[10:21]~ # species data matrix
+             temp+moist+nutrient+fire+dry, # Environmental variables
+             data = data_ordi2, distance="bray") # Bray-Curtis distance
+```
+
+Result of the ordination:
+
+```{r}
+ordi_temp
+```
+
+"Intertia" is the total variance - your environmental variables explain 0.2285 of this variance ("constrained" part).
+
+Proportion explained by each ordination axis. CAP1-CAP5 are the "constrained" axes, explained by your environmental variables. MDS1-MDS34 are the "unconstrained" axes.
+
+```{r}
+eigenvals(ordi_temp) %>%
+  summary()
+```
+
+Barplot of percentage variance explained by individual axes
+
+```{r}
+expl_var_ordi_temp <- c(ordi_temp$CCA$eig/ordi_temp$tot.chi*100, 
+                    ordi_temp$CA$eig/ordi_temp$tot.chi*100)
+barplot (expl_var_ordi_temp, col = c(rep ('red',
+                                          length (ordi_temp$CCA$eig/
+                                                    ordi_temp$tot.chi*100)),
+                                     rep ('black',                                       length(ordi_temp$CA$eig/ordi_temp$tot.chi*100))),
+         las = 2, ylab = '% variation')
+```
+
+Plot of the ordination (species in red and sites-samples in black):
+
+```{r fig.height=6, fig.width=6}
+vegan::ordiplot(ordi_temp,display = c('species', 'sites', 'bp'))
+orditorp(ordi_temp,display="species",cex=0.8,col="red")
+```
+
+This shows the two first constrained axes of the ordination. You can see how the sites and species distribute along these axes.
+
+Test significance of the ordination with Monte Carlo permutation test.
+
+For the whole model:
+
+```{r}
+anova (ordi_temp, permutations = 999) 
+```
+
+The model is significant.
+
+For each explanatory variable (with all the others used as covariables, independently from their order in the model):
+
+```{r}
+anova (ordi_temp, by = 'margin', permutations = 999)
+```
+
+Temp, moist, nutrient and dry show significant effects.
+
+For each axis:
+
+```{r}
+anova (ordi_temp, by = 'axis', permutations = 999)
+```
+
+Axis 1 and 2 are significant.
+
+Ordination plot with ggplot2.
+
+```{r}
+ggord(ordi_temp,ptslab=T,repel=T,labcol="red",veccol="red",size=NA,addsize=3,
+      xlims=c(-1.1,1.1),ylims=c(-1.1,1.1))+
+  geom_point(size=3,shape=20,color="black",alpha=0.2)
+```
+
+### Hierarchical partitioning
+
+```{r}
+hierpart_temp<-rdacca.hp(dist_matrix,data_ordi2[c(24,26:29)],method = "dbRDA",
+          type ="adjR2",scale = F,add = T,sqrt.dist = T)
+hierpart_temp
+plot(hierpart_temp,plot.perc=T)
+```
+
+```{r}
+vif.cca(ordi_temp)
+# VIFs of the ordination all below 2
+```
+
+## APPENDICES: Wtih age
+
+Calculate ordination:
+
+```{r}
+ordi_age<-capscale(data_ordi2[10:21]~ # species data matrix
+             age+moist+nutrient+fire+dry, # Environmental variables
+             data = data_ordi2, distance="bray") # Bray-Curtis distance
+```
+
+Result of the ordination:
+
+```{r}
+ordi_age
+```
+
+"Intertia" is the total variance - your environmental variables explain 0.2600 of this variance ("constrained" part).
+
+Proportion explained by each ordination axis. CAP1-CAP5 are the "constrained" axes, explained by your environmental variables. MDS1-MDS34 are the "unconstrained" axes.
+
+```{r}
+eigenvals(ordi_age) %>%
+  summary()
+```
+
+Barplot of percentage variance explained by individual axes
+
+```{r}
+expl_var_ordi_age <- c(ordi_age$CCA$eig/ordi_age$tot.chi*100, 
+                    ordi_age$CA$eig/ordi_age$tot.chi*100)
+barplot (expl_var_ordi_age, col = c(rep ('red',
+                                          length (ordi_age$CCA$eig/
+                                                    ordi_age$tot.chi*100)),
+                                     rep ('black',                                       length(ordi_age$CA$eig/ordi_age$tot.chi*100))),
+         las = 2, ylab = '% variation')
+```
+
+Plot of the ordination (species in red and sites-samples in black):
+
+```{r fig.height=6, fig.width=6}
+vegan::ordiplot(ordi_age,display = c('species', 'sites', 'bp'))
+orditorp(ordi_age,display="species",cex=0.8,col="red")
+```
+
+This shows the two first constrained axes of the ordination. You can see how the sites and species distribute along these axes.
+
+Test significance of the ordination with Monte Carlo permutation test.
+
+For the whole model:
+
+```{r}
+anova (ordi_age, permutations = 999) 
+```
+
+The model is significant.
+
+For each explanatory variable (with all the others used as covariables, independently from their order in the model):
+
+```{r}
+anova (ordi_age, by = 'margin', permutations = 999)
+```
+
+Age, moist, nutrient and dry show significant effects.
+
+For each axis:
+
+```{r}
+anova (ordi_age, by = 'axis', permutations = 999)
+```
+
+Axis 1 and 2 are significant.
+
+Ordination plot with ggplot2.
+
+```{r}
+ggord(ordi_age,ptslab=T,repel=T,labcol="red",veccol="red",size=NA,addsize=3,
+      xlims=c(-1.1,1.1),ylims=c(-1.1,1.1))+
+  geom_point(size=3,shape=20,color="black",alpha=0.2)
+```
+
+### Hierarchical partitioning
+
+```{r}
+hierpart_age<-rdacca.hp(dist_matrix,data_ordi2[c(23,26:29)],method = "dbRDA",
+          type ="adjR2",scale = F,add = T,sqrt.dist = T)
+hierpart_age
+plot(hierpart_age,plot.perc=T)
+```
+
+```{r}
+vif.cca(ordi_age)
+# VIFs of the ordination all below 2
+```
+
+# Abundance models (zero-inflated beta regressions)
+
+## Without interactions
+
+Check how many rows with each species absent:
+
+```{r}
+nrow(data_peat%>%filter(tot_Sphagnum==0))
+nrow(data_peat%>%filter(Erio==0)) # 1 row
+nrow(data_peat%>%filter(Carex==0)) # 2 rows
+nrow(data_peat%>%filter(Erica==0)) # 5 rows
+nrow(data_peat%>%filter(Balticum==0))
+nrow(data_peat%>%filter(Medium==0))
+nrow(data_peat%>%filter(Cuspidata==0))
+nrow(data_peat%>%filter(Austinii==0))
+nrow(data_peat%>%filter(Fuscum==0))
+nrow(data_peat%>%filter(Rubellum==0))
+# More species?
+```
+
+Erio, Erica and Carex have too few rows with absences. Presence/absence models will not work for these species. Fit models oinly for the abundance of those species.
+
+Abundance of Medium and Fuscum includes 0 and 100 - change 100 to 99.
+
+```{r}
+data_peat$Medium<-ifelse(data_peat$Medium>99,99,data_peat$Medium)
+data_peat$Fuscum<-ifelse(data_peat$Fuscum>99,99,data_peat$Fuscum)
+```
+
+Convert variables to proportions (from 0 to 1) instead of percentages:
+
+```{r}
+data_peat<-data_peat%>%
+  mutate(tot_Sphagnum_prop=tot_Sphagnum/100,
+         Erio_prop=Erio/100,
+         Erica_prop=Erica/100,
+         Carex_prop=Carex/100,
+         Medium_prop=Medium/100,
+         Fuscum_prop=Fuscum/100,
+         Rubellum_prop=Rubellum/100,
+         Balticum_prop=Balticum/100,
+         Cuspidata_prop=Cuspidata/100)
+```
+
+Check combinations of the three factors and the fen-bog factor:
+
+```{r}
+with(data_peat,table(fen,nutrient))
+with(data_peat,table(fen,fire))
+with(data_peat,table(fen,dry))
+```
+
+There are 0 cases where fen=Y and nutrient=1 so we will not be able to test the fen*nutrient interactions. We can include all interactions but this one in the models.
+
+### Plant groups
+
+#### APPENDICES: age and temp
+
+```{r}
+mod_abund_tot_Sphagnum<-glmmTMB(tot_Sphagnum_prop~age+temp+moist+nutrient+
+                                  fire+dry,family="beta_family",
+                                ziformula=~.,data=data_peat) 
+mod_abund_Erio_nozi<-glmmTMB(Erio_prop~age+temp+moist+nutrient+
+                               fire+dry,family="beta_family",
+                             ziformula=~0,data=subset(data_peat,Erio_prop>0))
+mod_abund_Erica_nozi<-glmmTMB(Erica_prop~age+temp+moist+nutrient+
+                                fire+dry,family="beta_family", 
+                              ziformula=~0, data_erica<-subset(data_peat,Erica>0))
+mod_abund_Carex_nozi<-glmmTMB(Carex_prop~age+temp+moist+nutrient+
+                                fire+dry,family="beta_family",
+                              ziformula=~0,data=subset(data_peat,Carex_prop>0))
+```
+
+```{r}
+summary(mod_abund_tot_Sphagnum)
+summary(mod_abund_Erio_nozi)
+summary(mod_abund_Erica_nozi)
+summary(mod_abund_Carex_nozi)
+```
+
+##### Plots Total Sphagnum
+
+Using ggemmeans: averages over the proportions of the categories of factors.
+
+```{r}
+plots_sphagnum<-grid.arrange(
+  # nutrient
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=nutrient,y=tot_Sphagnum_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                         type="fixed",terms=c("nutrient"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                            type="fixed",terms=c("nutrient"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient input")+ylab("Total Sphagnum abundance"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=tot_Sphagnum_prop),
+                position = position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Total Sphagnum abundance"),
+  ncol=2
+)
+ggsave(filename="output/figures/plots_sphagnum.tiff",plot=plots_sphagnum,
+       width=24,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_sphagnum.pdf",plot=plots_sphagnum,
+       width=24,height=12,units="cm",dpi=300)
+```
+
+##### Plots Erio
+
+Using ggemmeans: averages over the proportions of the categories of factors.
+
+```{r}
+plots_Erio<-grid.arrange(
+  # nutrient
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=nutrient,y=Erio_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Erio_nozi,
+                                         type="fixed",terms=c("nutrient"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Erio_nozi,
+                                            type="fixed",terms=c("nutrient"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient input")+ylab("Erio abundance"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=Erio_prop),
+                position = position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Erio_nozi,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Erio_nozi,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Erio abundance"),
+  ncol=2
+)
+ggsave(filename="output/figures/plots_Erio.tiff",plot=plots_Erio,
+       width=24,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_Erio.pdf",plot=plots_Erio,
+       width=24,height=12,units="cm",dpi=300)
+```
+
+##### Plots Erica
+
+Using ggemmeans: averages over the proportions of the categories of factors.
+
+```{r}
+plots_Erica<-ggplot()+
+  geom_ribbon(data=data.frame(ggemmeans(mod_abund_Erica_nozi,
+                                        type="fixed",terms=c("temp[all]"))),
+              aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),alpha=0.2)+
+  geom_line(data=data.frame(ggemmeans(mod_abund_Erica_nozi,
+                                      type="fixed",terms=c("temp[all]"))),
+            aes(x=x,y=predicted))+
+  geom_point(data=subset(data_peat,Erica_prop>0),aes(x=temp,y=Erica_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Erica abundance")
+ggsave(filename="output/figures/plots_Erica.tiff",plot=plots_Erica,
+       width=12,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_Erica.pdf",plot=plots_Erica,
+       width=12,height=12,units="cm",dpi=300)
+```
+
+##### Plots Carex
+
+Using ggemmeans: averages over the proportions of the categories of factors.
+
+```{r}
+plots_Carex<-grid.arrange(
+  # temp
+  ggplot()+
+    geom_ribbon(data=data.frame(ggemmeans(mod_abund_Carex_nozi,
+                                          type="fixed",terms=c("temp[all]"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                alpha=0.2)+
+    geom_line(data=data.frame(ggemmeans(mod_abund_Carex_nozi,
+                                        type="fixed",terms=c("temp[all]"))),
+              aes(x=x,y=predicted))+
+    geom_point(data=subset(data_peat,Carex_prop>0),aes(x=temp,y=Carex_prop),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    my_theme()+xlab("Temperature")+ylab("Carex abundance"),
+  # nutrient
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=nutrient,y=Carex_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Carex_nozi,
+                                         type="fixed",terms=c("nutrient"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Carex_nozi,
+                                            type="fixed",terms=c("nutrient"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient input")+ylab("Carex abundance"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=Carex_prop),
+                position = position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Carex_nozi,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Carex_nozi,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Carex abundance"),
+  ncol=3
+)
+ggsave(filename="output/figures/plots_Carex.tiff",plot=plots_Carex,
+       width=36,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_Carex.pdf",plot=plots_Carex,
+       width=36,height=12,units="cm",dpi=300)
+```
+
+#### Selected Sphagnum species
+
+```{r}
+mod_abund_Medium<-glmmTMB(Medium_prop~age+temp+moist+
+                            nutrient+fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum<-glmmTMB(Fuscum_prop~age+temp+moist+
+                            nutrient+fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum<-glmmTMB(Rubellum_prop~age+temp+moist+
+                              nutrient+fire+dry,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Balticum<-glmmTMB(Balticum_prop~age+temp+moist+
+                              nutrient+fire+dry,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Cuspidata<-glmmTMB(Cuspidata_prop~age+temp+moist+
+                               nutrient+fire+dry,family="beta_family",
+                             ziformula=~.,data=data_peat) 
+```
+
+```{r}
+summary(mod_abund_Medium)
+summary(mod_abund_Fuscum)
+summary(mod_abund_Rubellum)
+summary(mod_abund_Balticum)
+summary(mod_abund_Cuspidata)
+```
+
+##### Plots Medium
+
+Using ggemmeans with type="zi_prob" gives error "Error: This prediction-type is currently not available for models of class 'glmmTMB'".
+
+So for age, I am using ggpredict and calculating an average prediction
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Medium_age<-rbind(
+  tibble(ggpredict(mod_abund_Medium,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Medium,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Medium,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Medium,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_Medium,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_Medium,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_Medium,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_Medium,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),std.error=mean(std.error),
+                          conf.low=mean(conf.low),conf.high=mean(conf.high))
+```
+
+```{r}
+plots_Medium<-grid.arrange(
+  # age
+  ggplot()+
+    geom_ribbon(data=average_prediction_Medium_age,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                alpha=0.2)+
+    geom_line(data=average_prediction_Medium_age,
+              aes(x=x,y=1-predicted))+
+    geom_point(data=data_peat,aes(x=age,y=Medium_prop),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    my_theme()+xlab("Age")+ylab("Probability of Medium presence"),
+  # nutrient
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=nutrient,y=Medium_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                         type="fixed",terms=c("nutrient"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                            type="fixed",terms=c("nutrient"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient input")+ylab("Medium abundance"),
+  # fire
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=fire,y=Medium_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                         type="fixed",terms=c("fire"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                            type="fixed",terms=c("fire"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Fire")+ylab("Medium abundance"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=Medium_prop),
+                position = position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Medium,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Medium abundance"),
+  ncol=2
+)
+ggsave(filename="output/figures/plots_Medium.tiff",plot=plots_Medium,
+       width=24,height=24,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_Medium.pdf",plot=plots_Medium,
+       width=24,height=24,units="cm",dpi=300)
+```
+
+##### Plots Fuscum
+
+Create average predictions for the effects of moisture and nutrients on the zero-inflated part.
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Fuscum_moist<-rbind(
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%  # NaNs produced
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Fuscum_nutrient<-rbind(
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Fuscum,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="d")
+  )%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+plots_Fuscum<-grid.arrange(
+  # moist - CI band looking a bit weird
+  ggplot()+
+    geom_ribbon(data=average_prediction_Fuscum_moist,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                alpha=0.2)+
+    geom_line(data=average_prediction_Fuscum_moist,
+              aes(x=x,y=1-predicted))+
+    geom_point(data=data_peat,aes(x=moist,y=Fuscum_prop),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    my_theme()+xlab("Moisture")+ylab("Probability of Fuscum presence"),
+  # nutrient
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=nutrient,y=Fuscum_prop),
+                position=position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=average_prediction_Fuscum_nutrient,
+               aes(x=x,y=1-predicted),size=4,shape=16)+
+    geom_errorbar(data=average_prediction_Fuscum_nutrient,
+               aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+               width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient")+ylab("Probability of Fuscum presence"),
+  # age
+  ggplot()+
+    geom_ribbon(data=data.frame(ggemmeans(mod_abund_Fuscum,
+                                          type="fixed",terms=c("age"))),
+                                aes(x=x,y=predicted,
+                                    ymin=conf.low,ymax=conf.high),alpha=0.2)+
+    geom_line(data=data.frame(ggemmeans(mod_abund_Fuscum,
+                                          type="fixed",terms=c("age"))),
+                              aes(x=x,y=predicted))+
+    geom_point(data=data_peat,aes(x=age,y=Fuscum_prop),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    my_theme()+xlab("Age")+ylab("Fuscum abundance"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=Fuscum_prop),
+                position = position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Fuscum,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Fuscum,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Fuscum abundance"),
+  ncol=2
+)
+ggsave(filename="output/figures/plots_Fuscum.tiff",plot=plots_Fuscum,
+       width=24,height=24,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_Fuscum.pdf",plot=plots_Fuscum,
+       width=24,height=24,units="cm",dpi=300)
+```
+
+##### Plots Rubellum
+ 
+Create average predictions for the effects of nutrients and dry on the zero-inflated part.
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Rubellum_nutrient<-rbind(
+  tibble(ggpredict(mod_abund_Rubellum,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Rubellum,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Rubellum,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Rubellum,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="d")
+  )%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+``` 
+ 
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Rubellum_dry<-rbind(
+  tibble(ggpredict(mod_abund_Rubellum,type="zi_prob",terms=c("dry"),
+                   condition=c(fire=1,nutrient=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Rubellum,type="zi_prob",terms=c("dry"),
+                   condition=c(fire=0,nutrient=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Rubellum,type="zi_prob",terms=c("dry"),
+                   condition=c(fire=0,nutrient=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Rubellum,type="zi_prob",terms=c("dry"),
+                   condition=c(fire=1,nutrient=0)))%>%
+    select(-group)%>%mutate(type="d")
+  )%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+``` 
+ 
+```{r}
+plots_Rubellum<-grid.arrange(
+    # nutrient
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=nutrient,y=Rubellum_prop),
+                position=position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=average_prediction_Rubellum_nutrient,
+               aes(x=x,y=1-predicted),size=4,shape=16)+
+    geom_errorbar(data=average_prediction_Rubellum_nutrient,
+               aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+               width=0.2,size=0.5)+
+    my_theme()+xlab("Nutrient")+ylab("Probability of Rubellum presence"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=Rubellum_prop),
+                position=position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=average_prediction_Rubellum_dry,
+               aes(x=x,y=1-predicted),size=4,shape=16)+
+    geom_errorbar(data=average_prediction_Rubellum_dry,
+               aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+               width=0.2,size=0.5)+
+    my_theme()+xlab("Dry")+ylab("Probability of Rubellum presence"),
+  # fire
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=fire,y=Rubellum_prop),
+                position = position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Rubellum,
+                                         type="fixed",terms=c("fire"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Rubellum,
+                                            type="fixed",terms=c("fire"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("fire")+ylab("Rubellum abundance"),
+  ncol=3
+)
+ggsave(filename="output/figures/plots_Rubellum.tiff",plot=plots_Rubellum,
+       width=36,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_Rubellum.pdf",plot=plots_Rubellum,
+       width=36,height=12,units="cm",dpi=300)
+```
+
+##### Plots Balticum
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Balticum_age<-rbind(
+  tibble(ggpredict(mod_abund_Balticum,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Balticum,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Balticum,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Balticum,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_Balticum,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_Balticum,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_Balticum,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_Balticum,type="zi_prob",terms=c("age[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),std.error=mean(std.error),
+                          conf.low=mean(conf.low),conf.high=mean(conf.high))
+```
+
+```{r}
+plots_Balticum<-grid.arrange(
+  # age
+  ggplot()+
+    geom_ribbon(data=average_prediction_Balticum_age,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                alpha=0.2)+
+    geom_line(data=average_prediction_Balticum_age,
+              aes(x=x,y=1-predicted))+
+    geom_point(data=data_peat,aes(x=age,y=Balticum_prop),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    my_theme()+xlab("Age")+ylab("Probability of Balticum presence"),
+  # moist
+  ggplot()+
+    geom_ribbon(data=data.frame(ggemmeans(mod_abund_Balticum,
+                                          type="fixed",terms=c("moist[all]"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),alpha=0.2)+
+    geom_line(data=data.frame(ggemmeans(mod_abund_Balticum,
+                                        type="fixed",terms=c("moist[all]"))),
+              aes(x=x,y=predicted))+
+    geom_point(data=data_peat,aes(x=moist,y=Balticum_prop),
+               size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    my_theme()+xlab("Moisture")+ylab("Balticum abundance"),
+  # dry
+  ggplot()+
+    geom_jitter(data=data_peat,aes(x=dry,y=Balticum_prop),
+                position = position_jitter(0.1,0.01),
+                size=3,alpha=0.3,shape=16,color="darkturquoise")+
+    geom_point(data=data.frame(ggemmeans(mod_abund_Balticum,
+                                         type="fixed",terms=c("dry"))),
+               aes(x=x,y=predicted),size=4,shape=16)+
+    geom_errorbar(data=data.frame(ggemmeans(mod_abund_Balticum,
+                                            type="fixed",terms=c("dry"))),
+                  aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                  width=0.2,size=0.5)+
+    my_theme()+xlab("Dry period")+ylab("Balticum abundance"),
+  ncol=3
+)
+ggsave(filename="output/figures/plots_Balticum.tiff",plot=plots_Balticum,
+       width=36,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plots_Balticum.pdf",plot=plots_Balticum,
+       width=36,height=12,units="cm",dpi=300)
+```
+
+#### Check VIFs of all models
+
+```{r}
+plot(check_collinearity(mod_abund_tot_Sphagnum))
+plot(check_collinearity(mod_abund_Erio_nozi))
+plot(check_collinearity(mod_abund_Erica_nozi))
+plot(check_collinearity(mod_abund_Carex_nozi))
+plot(check_collinearity(mod_abund_Medium))
+plot(check_collinearity(mod_abund_Fuscum))
+plot(check_collinearity(mod_abund_Rubellum))
+plot(check_collinearity(mod_abund_Balticum))
+plot(check_collinearity(mod_abund_Cuspidata))
+```
+
+Age and temp always over 2.
+
+#### Tables Appendices
+
+```{r}
+tab_model(mod_abund_tot_Sphagnum,mod_abund_Erio_nozi,
+          mod_abund_Erica_nozi,mod_abund_Carex_nozi,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("Total Sphagnum","Eriophorum","Erica","Carex"))
+```
+
+```{r}
+tab_model(mod_abund_Medium,mod_abund_Fuscum,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("S. medium","S. fuscum"))
+```
+
+```{r}
+tab_model(mod_abund_Rubellum,mod_abund_Balticum,
+          mod_abund_Cuspidata,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("S. rubellum","S. balticum","S. cuspidata"))
+```
+
+### MAIN TEXT: temperature
+
+#### Plant groups
+
+```{r}
+mod_abund_tot_Sphagnum_temp<-glmmTMB(tot_Sphagnum_prop~temp+moist+nutrient+
+                                  fire+dry,family="beta_family",
+                                ziformula=~.,data=data_peat) 
+mod_abund_Erio_nozi_temp<-glmmTMB(Erio_prop~temp+moist+nutrient+
+                               fire+dry,family="beta_family",
+                             ziformula=~0,data=subset(data_peat,Erio_prop>0))
+mod_abund_Erica_nozi_temp<-glmmTMB(Erica_prop~temp+moist+nutrient+
+                                fire+dry,family="beta_family", 
+                              ziformula=~0, data_erica<-subset(data_peat,Erica>0))
+mod_abund_Carex_nozi_temp<-glmmTMB(Carex_prop~temp+moist+nutrient+
+                                fire+dry,family="beta_family",
+                              ziformula=~0,data=subset(data_peat,Carex_prop>0))
+```
+
+```{r}
+plot(check_collinearity(mod_abund_tot_Sphagnum_temp))
+plot(check_collinearity(mod_abund_Erio_nozi_temp))
+plot(check_collinearity(mod_abund_Erica_nozi_temp))
+plot(check_collinearity(mod_abund_Carex_nozi_temp))
+```
+
+VIFs are all under 2 now
+
+```{r}
+summary(mod_abund_tot_Sphagnum_temp)
+summary(mod_abund_Erio_nozi_temp)
+summary(mod_abund_Erica_nozi_temp)
+summary(mod_abund_Carex_nozi_temp)
+```
+
+CHANGES from previous models:
+
+Total Sphagnum: significant effect of temp in the model with only temp (both in the conditional and zero-inflation parts of the model). Significant effect of nutrient in the zero-inflation part in the mdoel with only temp. All previously significant effects stay. 
+
+Erio: significant effect of temp in the model with only temp.
+
+Erica: No changes (temp still significant in the model with only temp)
+
+Carex: No changes.
+
+##### Table 1
+
+```{r}
+tab_model(mod_abund_tot_Sphagnum_temp,mod_abund_Erio_nozi_temp,
+          mod_abund_Erica_nozi_temp,mod_abund_Carex_nozi_temp,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("Total Sphagnum","Eriophorum","Erica","Carex"))
+```
+
+#### Selected Sphagnum species
+
+```{r}
+mod_abund_Medium_temp<-glmmTMB(Medium_prop~temp+moist+
+                            nutrient+fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_temp<-glmmTMB(Fuscum_prop~temp+moist+
+                            nutrient+fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_temp<-glmmTMB(Rubellum_prop~temp+moist+
+                              nutrient+fire+dry,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Balticum_temp<-glmmTMB(Balticum_prop~temp+moist+
+                              nutrient+fire+dry,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Cuspidata_temp<-glmmTMB(Cuspidata_prop~temp+moist+
+                               nutrient+fire+dry,family="beta_family",
+                             ziformula=~.,data=data_peat) 
+```
+
+```{r}
+plot(check_collinearity(mod_abund_Medium_temp))
+# All under 2
+plot(check_collinearity(mod_abund_Fuscum_temp))
+# All under 2
+plot(check_collinearity(mod_abund_Rubellum_temp))
+# Fire just over 2 in the conditional component
+plot(check_collinearity(mod_abund_Balticum_temp))
+# All but temp over 2 in the conditional component
+plot(check_collinearity(mod_abund_Cuspidata_temp))
+# Dry, moist and nutrient over 2 in the conditional component
+```
+
+```{r}
+summary(mod_abund_Medium_temp)
+summary(mod_abund_Fuscum_temp)
+summary(mod_abund_Rubellum_temp)
+summary(mod_abund_Balticum_temp)
+summary(mod_abund_Cuspidata_temp)
+```
+
+##### Table 2
+
+```{r}
+tab_model(mod_abund_Medium_temp,mod_abund_Fuscum_temp,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("S. medium","S. fuscum"))
+```
+
+##### Table 3
+
+```{r}
+tab_model(mod_abund_Rubellum_temp,mod_abund_Balticum_temp,
+          mod_abund_Cuspidata_temp,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("S. rubellum","S. balticum","S. cuspidata"))
+```
+
+##### Rubellum, Balticum and Cuspidata: models with single variables in the condtiional part
+
+```{r}
+mod_abund_Rubellum_temponly<-glmmTMB(Rubellum_prop~temp,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Balticum_temponly<-glmmTMB(Balticum_prop~temp,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Cuspidata_temponly<-glmmTMB(Cuspidata_prop~temp,family="beta_family",
+                             ziformula=~.,
+                             data=data_peat)
+mod_abund_Rubellum_moistonly<-glmmTMB(Rubellum_prop~moist,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Balticum_moistonly<-glmmTMB(Balticum_prop~moist,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Cuspidata_moistonly<-glmmTMB(Cuspidata_prop~moist,family="beta_family",
+                             ziformula=~.,
+                             data=data_peat)
+mod_abund_Rubellum_nutrientonly<-glmmTMB(Rubellum_prop~nutrient,
+                                         family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Balticum_nutrientonly<-glmmTMB(Balticum_prop~nutrient,
+                                         family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Cuspidata_nutrientonly<-glmmTMB(Cuspidata_prop~nutrient,
+                                          family="beta_family",
+                             ziformula=~.,
+                             data=data_peat)
+mod_abund_Rubellum_fireonly<-glmmTMB(Rubellum_prop~fire,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Balticum_fireonly<-glmmTMB(Balticum_prop~fire,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Cuspidata_fireonly<-glmmTMB(Cuspidata_prop~fire,family="beta_family",
+                             ziformula=~.,
+                             data=data_peat)
+mod_abund_Rubellum_dryonly<-glmmTMB(Rubellum_prop~dry,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Balticum_dryonly<-glmmTMB(Balticum_prop~dry,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Cuspidata_dryonly<-glmmTMB(Cuspidata_prop~dry,family="beta_family",
+                             ziformula=~.,
+                             data=data_peat)
+```
+
+These results should be added to Table 3:
+
+```{r}
+summary(mod_abund_Rubellum_temponly)
+summary(mod_abund_Balticum_temponly)
+summary(mod_abund_Cuspidata_temponly)
+summary(mod_abund_Rubellum_moistonly)
+summary(mod_abund_Balticum_moistonly)
+summary(mod_abund_Cuspidata_moistonly)
+summary(mod_abund_Rubellum_nutrientonly)
+summary(mod_abund_Balticum_nutrientonly)
+summary(mod_abund_Cuspidata_nutrientonly)
+summary(mod_abund_Rubellum_fireonly)
+summary(mod_abund_Balticum_fireonly)
+summary(mod_abund_Cuspidata_fireonly)
+summary(mod_abund_Rubellum_dryonly)
+summary(mod_abund_Balticum_dryonly)
+summary(mod_abund_Cuspidata_dryonly)
+```
+
+### APPENDICES: age
+
+#### Plant groups
+
+```{r}
+mod_abund_tot_Sphagnum_age<-glmmTMB(tot_Sphagnum_prop~age+moist+nutrient+
+                                  fire+dry,family="beta_family",
+                                ziformula=~.,data=data_peat) 
+mod_abund_Erio_nozi_age<-glmmTMB(Erio_prop~age+moist+nutrient+
+                               fire+dry,family="beta_family",
+                             ziformula=~0,data=subset(data_peat,Erio_prop>0))
+mod_abund_Erica_nozi_age<-glmmTMB(Erica_prop~age+moist+nutrient+
+                                fire+dry,family="beta_family", 
+                              ziformula=~0, data_erica<-subset(data_peat,Erica>0))
+mod_abund_Carex_nozi_age<-glmmTMB(Carex_prop~age+moist+nutrient+
+                                fire+dry,family="beta_family",
+                              ziformula=~0,data=subset(data_peat,Carex_prop>0))
+```
+
+```{r}
+plot(check_collinearity(mod_abund_tot_Sphagnum_age))
+plot(check_collinearity(mod_abund_Erio_nozi_age))
+plot(check_collinearity(mod_abund_Erica_nozi_age))
+plot(check_collinearity(mod_abund_Carex_nozi_age))
+```
+
+All under 2.
+
+```{r}
+summary(mod_abund_tot_Sphagnum_age)
+summary(mod_abund_Erio_nozi_age)
+summary(mod_abund_Erica_nozi_age)
+summary(mod_abund_Carex_nozi_age)
+```
+
+#### Selected Sphagnum species
+
+```{r}
+mod_abund_Medium_age<-glmmTMB(Medium_prop~age+moist+
+                            nutrient+fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_age<-glmmTMB(Fuscum_prop~age+moist+
+                            nutrient+fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_age<-glmmTMB(Rubellum_prop~age+moist+
+                              nutrient+fire+dry,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Balticum_age<-glmmTMB(Balticum_prop~age+moist+
+                              nutrient+fire+dry,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Cuspidata_age<-glmmTMB(Cuspidata_prop~age+moist+
+                               nutrient+fire+dry,family="beta_family",
+                             ziformula=~.,data=data_peat)
+```
+
+```{r}
+plot(check_collinearity(mod_abund_Medium_age))
+# All under 2
+plot(check_collinearity(mod_abund_Fuscum_age))
+# All under 2
+plot(check_collinearity(mod_abund_Rubellum_age))
+# Fire just over 2 in the conditional component
+plot(check_collinearity(mod_abund_Balticum_age))
+# All over 2 in the conditional component
+plot(check_collinearity(mod_abund_Cuspidata_age))
+# Dry, moist and nutrient over 2 in the conditional component
+```
+
+##### Rubellum, Balticum and Cuspidata: models with single variables in the condtiional part
+
+```{r}
+mod_abund_Rubellum_ageonly<-glmmTMB(Rubellum_prop~age,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Balticum_ageonly<-glmmTMB(Balticum_prop~age,family="beta_family",
+                            ziformula=~.,
+                            data=data_peat) 
+mod_abund_Cuspidata_ageonly<-glmmTMB(Cuspidata_prop~age,family="beta_family",
+                             ziformula=~.,
+                             data=data_peat)
+# For other predictors, see below
+```
+
+```{r}
+summary(mod_abund_Rubellum_ageonly)
+summary(mod_abund_Balticum_ageonly)
+summary(mod_abund_Cuspidata_ageonly)
+```
+
+#### Tables Appendices
+
+```{r}
+tab_model(mod_abund_tot_Sphagnum_age,mod_abund_Erio_nozi_age,
+          mod_abund_Erica_nozi_age,mod_abund_Carex_nozi_age,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("Total Sphagnum","Eriophorum","Erica","Carex"))
+```
+
+```{r}
+tab_model(mod_abund_Medium_age,mod_abund_Fuscum_age,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("S. medium","S. fuscum"))
+```
+
+```{r}
+tab_model(mod_abund_Rubellum_age,mod_abund_Balticum_age,
+          mod_abund_Cuspidata_age,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("S. rubellum","S. balticum","S. cuspidata"))
+```
+
+## With fen-bog and interactions
+
+### MAIN TEXT: temperature 
+
+Plant groups only
+
+#### Step 1: Models with all interactions (except fen*nutrient)
+
+In these models I include all interactions of fen with the other variables (except for fen*nutrient which will give problems).
+
+```{r}
+mod_abund_tot_Sphagnum_temp_all_ints<-glmmTMB(tot_Sphagnum_prop~(temp+moist+
+                                  fire+dry)*fen+nutrient,family="beta_family",
+                                ziformula=~.,data=data_peat) 
+mod_abund_Erio_nozi_temp_all_ints<-glmmTMB(Erio_prop~(temp+moist+
+                               fire+dry)*fen+nutrient,family="beta_family",
+                             ziformula=~0,data=subset(data_peat,Erio_prop>0))
+mod_abund_Erica_nozi_temp_all_ints<-glmmTMB(Erica_prop~(temp+moist+
+                                fire+dry)*fen+nutrient,family="beta_family", 
+                              ziformula=~0, data_erica<-subset(data_peat,Erica>0))
+mod_abund_Carex_nozi_temp_all_ints<-glmmTMB(Carex_prop~(temp+moist+
+                                fire+dry)*fen+nutrient,family="beta_family",
+                              ziformula=~0,data=subset(data_peat,Carex_prop>0))
+```
+
+```{r}
+summary(mod_abund_tot_Sphagnum_temp_all_ints)
+summary(mod_abund_Erio_nozi_temp_all_ints)
+summary(mod_abund_Erica_nozi_temp_all_ints)
+summary(mod_abund_Carex_nozi_temp_all_ints)
+```
+
+#### Step 2: Models with only significant interactions
+
+In these models I include only the interactions of fen with the other variables that were significant in step 1. If one interaction was significant only in the abundance part ("conditional model") or on the presence part ("zero-inflation model") I inlcude it only on that part of the model. 
+
+```{r}
+# Total Sphagnum: significant interaction fire*fen 
+# included ONLY in the zero-inflated part
+mod_abund_tot_Sphagnum_temp_sig_ints<-glmmTMB(tot_Sphagnum_prop~temp+moist+
+                                  nutrient+dry+fire+fen,family="beta_family",
+                                ziformula=~temp+moist+
+                                  nutrient+dry+fire+fen+fire:fen,data=data_peat) 
+# Erio: significant interaction temp*fen
+mod_abund_Erio_nozi_temp_sig_ints<-glmmTMB(Erio_prop~temp*fen+moist+
+                               fire+dry+nutrient,family="beta_family",
+                             ziformula=~0,data=subset(data_peat,Erio_prop>0))
+# Not anymore significant!
+# Erica: significant interaction fire*fen and dry*fen
+mod_abund_Erica_nozi_temp_sig_ints<-glmmTMB(Erica_prop~temp+moist+fire+dry+
+                                              nutrient+fen+fen:fire+fen:dry,
+                                            family="beta_family",                               ziformula=~0,subset(data_peat,Erica_prop>0))
+# dry:fen Not anymore significant!
+# Carex: no significant interactions
+```
+
+```{r}
+summary(mod_abund_tot_Sphagnum_temp_sig_ints)
+summary(mod_abund_Erio_nozi_temp_sig_ints)
+summary(mod_abund_Erica_nozi_temp_sig_ints)
+```
+
+###### Table 4
+
+```{r}
+tab_model(mod_abund_tot_Sphagnum_temp_sig_ints,
+          mod_abund_Erio_nozi_temp_sig_ints,mod_abund_Erica_nozi_temp_sig_ints,
+          show.ci=F,show.se=T,show.stat=T,digits=3,show.intercept=F,
+          show.r2=F,show.obs=F,transform=NULL,
+          dv.labels=c("Total Sphagnum","Eriophorum","Erica"))
+```
+
+###### Plots interactions Total Sphagnum
+
+Using ggemmeans with type="zi_prob" gives error "Error: This prediction-type is currently not available for models of class 'glmmTMB'".
+
+So for fire, I am using ggpredict and calculating an average prediction
+
+Create average prediction for the effects of fire:fen on the zero-inflated part:
+
+```{r}
+average_prediction_total_Sphagnum_fire_fen<-rbind(
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp_sig_ints,type="zi_prob",
+                   terms=c("fen","fire"),
+                   condition=c(nutrient=1,dry=1)))%>%
+    rename(fire=group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp_sig_ints,type="zi_prob",
+                   terms=c("fen","fire"),
+                   condition=c(nutrient=0,dry=0)))%>%
+    rename(fire=group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp_sig_ints,type="zi_prob",
+                   terms=c("fen","fire"),
+                   condition=c(nutrient=0,dry=1)))%>%
+    rename(fire=group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp_sig_ints,type="zi_prob",
+                   terms=c("fen","fire"),
+                   condition=c(nutrient=1,dry=0)))%>%
+    rename(fire=group)%>%mutate(type="d")
+  )%>%
+  group_by(x,fire)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+plot_sphagnum_int<-ggplot()+
+  geom_jitter(data=data_peat,aes(x=fen,y=tot_Sphagnum_prop,color=fire),
+              position=position_jitterdodge(jitter.width=0.1,
+                                            jitter.height=0.01,
+                                            dodge.width=0.5),
+              size=3,alpha=0.2,shape=16)+
+  geom_point(data=average_prediction_total_Sphagnum_fire_fen,
+             aes(x=x,y=1-predicted,color=fire),
+             size=4,shape=16,position=position_dodge(0.5))+
+  geom_errorbar(data=average_prediction_total_Sphagnum_fire_fen,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high,
+                    color=fire),
+                width=0.2,size=0.5,position=position_dodge(0.5))+
+  scale_color_manual(values=c("#fdae61","#d7191c"))+
+  my_theme()+xlab("Fen")+ylab("Probability of total Sphagnum presence")
+plot_sphagnum_int
+ggsave(filename="output/figures/plot_sphagnum_int.tiff",plot=plot_sphagnum_int,
+       width=12,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plot_sphagnum_int.pdf",plot=plot_sphagnum_int,
+       width=12,height=12,units="cm",dpi=300)
+```
+
+##### Plots interactions Erio
+
+```{r}
+plot_Erio_int<-ggplot()+
+  geom_point(data=data_peat,aes(x=temp,y=Erio_prop,color=fen),
+             size=3,alpha=0.2,shape=16)+
+  geom_ribbon(data=data.frame(ggemmeans(mod_abund_Erio_nozi_temp_sig_ints,
+                                          type="fixed",terms=c("temp","fen"))),
+                              aes(x=x,y=predicted,fill=group,
+                                  ymin=conf.low,ymax=conf.high),
+              alpha=0.2)+
+  geom_line(data=data.frame(ggemmeans(mod_abund_Erio_nozi_temp_sig_ints,
+                                          type="fixed",terms=c("temp","fen"))),
+                              aes(x=x,y=predicted,color=group))+
+  my_theme()+xlab("Temperature")+ylab("Erio abundance")+
+  scale_color_manual(values=c("#CC6699","#339966"))+
+  scale_fill_manual(values=c("#CC6699","#339966"))
+plot_Erio_int
+ggsave(filename="output/figures/plot_Erio_int.tiff",plot=plot_Erio_int,
+       width=12,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plot_Erio_int.pdf",plot=plot_Erio_int,
+       width=12,height=12,units="cm",dpi=300)
+```
+
+
+###### Plots interactions Erica
+
+Using ggemmeans: averages over the proportions of the categories of factors.
+
+```{r}
+plot_Erica_int<-ggplot()+
+  geom_jitter(data=data_peat,aes(x=fen,y=Erica_prop,color=fire),
+              position=position_jitterdodge(jitter.width=0.1,
+                                            jitter.height=0.01,
+                                            dodge.width=0.5),
+              size=3,alpha=0.2,shape=16)+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Erica_nozi_temp_sig_ints,
+                                        type="fixed",terms=c("fen","fire"))),
+              aes(x=x,y=predicted,color=group),
+             size=4,shape=16,position=position_dodge(0.5))+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Erica_nozi_temp_sig_ints,
+                                      type="fixed",terms=c("fen","fire"))),
+            aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high,color=group),
+            width=0.2,size=0.5,position=position_dodge(0.5))+
+  scale_color_manual(values=c("#fdae61","#d7191c"))+
+  my_theme()+xlab("Fen")+ylab("Erica abundance")
+plot_Erica_int
+ggsave(filename="output/figures/plot_Erica_int.tiff",plot=plot_Erica_int,
+       width=12,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plot_Erica_int.pdf",plot=plot_Erica_int,
+       width=12,height=12,units="cm",dpi=300)
+```
+
+```{r}
+plot(ggemmeans(mod_abund_Erica_nozi_temp_sig_ints,terms=c("fen","fire")))
+```
+
+### (NOT NEEDED?): age and temp
+
+#### Plant groups
+
+##### Step 1: Models with all interactions (except fen*nutrient)
+
+In these models I include all interactions of fen with the other variables (except for fen*nutrient which will give problems).
+
+```{r}
+mod_abund_tot_Sphagnum_all_ints<-glmmTMB(tot_Sphagnum_prop~(age+temp+moist+
+                                  fire+dry)*fen+nutrient,family="beta_family",
+                                ziformula=~.,data=data_peat) 
+mod_abund_Erio_nozi_all_ints<-glmmTMB(Erio_prop~(age+temp+moist+
+                               fire+dry)*fen+nutrient,family="beta_family",
+                             ziformula=~0,data=subset(data_peat,Erio_prop>0))
+mod_abund_Erica_nozi_all_ints<-glmmTMB(Erica_prop~(age+temp+moist+
+                                fire+dry)*fen+nutrient,family="beta_family", 
+                              ziformula=~0, data_erica<-subset(data_peat,Erica>0))
+mod_abund_Carex_nozi_all_ints<-glmmTMB(Carex_prop~(age+temp+moist+
+                                fire+dry)*fen+nutrient,family="beta_family",
+                              ziformula=~0,data=subset(data_peat,Carex_prop>0))
+```
+
+```{r}
+summary(mod_abund_tot_Sphagnum_all_ints)
+summary(mod_abund_Erio_nozi_all_ints)
+summary(mod_abund_Erica_nozi_all_ints)
+summary(mod_abund_Carex_nozi_all_ints)
+```
+
+##### Step 2: Models with only significant interactions
+
+In these models I include only the interactions of fen with the other variables that were significant in step 1. If one interaction was significant only in the abundance part ("conditional model") or on the presence part ("zero-inflation model") I inlcude it only on that part of the model. 
+
+```{r}
+# Total Sphagnum: significant interaction fire*fen 
+# included ONLY in the zero-inflated part
+mod_abund_tot_Sphagnum_sig_ints<-glmmTMB(tot_Sphagnum_prop~age+temp+moist+
+                                  nutrient+dry+fire+fen,family="beta_family",
+                                ziformula=~age+temp+moist+
+                                  nutrient+dry+fire+fen+fire:fen,data=data_peat) 
+# Erio: no significant interactions
+# Erica: significant interaction fire*fen 
+mod_abund_Erica_nozi_sig_ints<-glmmTMB(Erica_prop~age+temp+moist+
+                                fire*fen+dry+nutrient,family="beta_family", 
+                              ziformula=~0, data_erica<-subset(data_peat,Erica>0))
+# Carex: no significant interactions
+```
+
+```{r}
+summary(mod_abund_tot_Sphagnum_sig_ints)
+summary(mod_abund_Erica_nozi_sig_ints)
+```
+
+###### Plots interactions Total Sphagnum
+
+Using ggemmeans with type="zi_prob" gives error "Error: This prediction-type is currently not available for models of class 'glmmTMB'".
+
+So for fire, I am using ggpredict and calculating an average prediction
+
+Create average prediction for the effects of fire:fen on the zero-inflated part:
+
+```{r}
+average_prediction_total_Sphagnum_fire_fen<-rbind(
+  tibble(ggpredict(mod_abund_tot_Sphagnum_sig_ints,type="zi_prob",
+                   terms=c("fen","fire"),
+                   condition=c(nutrient=1,dry=1)))%>%
+    rename(fire=group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_sig_ints,type="zi_prob",
+                   terms=c("fen","fire"),
+                   condition=c(nutrient=0,dry=0)))%>%
+    rename(fire=group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_sig_ints,type="zi_prob",
+                   terms=c("fen","fire"),
+                   condition=c(nutrient=0,dry=1)))%>%
+    rename(fire=group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_sig_ints,type="zi_prob",
+                   terms=c("fen","fire"),
+                   condition=c(nutrient=1,dry=0)))%>%
+    rename(fire=group)%>%mutate(type="d")
+  )%>%
+  group_by(x,fire)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+plot_sphagnum_int<-ggplot()+
+  geom_jitter(data=data_peat,aes(x=fen,y=tot_Sphagnum_prop,color=fire),
+              position=position_jitterdodge(jitter.width=0.1,
+                                            jitter.height=0.01,
+                                            dodge.width=0.5),
+              size=3,alpha=0.2,shape=16)+
+  geom_point(data=average_prediction_total_Sphagnum_fire_fen,
+             aes(x=x,y=1-predicted,color=fire),
+             size=4,shape=16,position=position_dodge(0.5))+
+  geom_errorbar(data=average_prediction_total_Sphagnum_fire_fen,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high,
+                    color=fire),
+                width=0.2,size=0.5,position=position_dodge(0.5))+
+  scale_color_manual(values=c("#fdae61","#d7191c"))+
+  my_theme()+xlab("Fen")+ylab("Probability of total Sphagnum presence")
+plot_sphagnum_int
+ggsave(filename="output/figures/plot_sphagnum_int.tiff",plot=plot_sphagnum_int,
+       width=12,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plot_sphagnum_int.pdf",plot=plot_sphagnum_int,
+       width=12,height=12,units="cm",dpi=300)
+```
+
+###### Plots interactions Erica
+
+Using ggemmeans: averages over the proportions of the categories of factors.
+
+```{r}
+plot_Erica_int<-ggplot()+
+  geom_jitter(data=data_peat,aes(x=fen,y=Erica_prop,color=fire),
+              position=position_jitterdodge(jitter.width=0.1,
+                                            jitter.height=0.01,
+                                            dodge.width=0.5),
+              size=3,alpha=0.2,shape=16)+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Erica_nozi_sig_ints,
+                                        type="fixed",terms=c("fen","fire"))),
+              aes(x=x,y=predicted,color=group),
+             size=4,shape=16,position=position_dodge(0.5))+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Erica_nozi_sig_ints,
+                                      type="fixed",terms=c("fen","fire"))),
+            aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high,color=group),
+            width=0.2,size=0.5,position=position_dodge(0.5))+
+  scale_color_manual(values=c("#fdae61","#d7191c"))+
+  my_theme()+xlab("Fen")+ylab("Erica abundance")
+plot_Erica_int
+ggsave(filename="output/figures/plot_Erica_int.tiff",plot=plot_Erica_int,
+       width=12,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/plot_Erica_int.pdf",plot=plot_Erica_int,
+       width=12,height=12,units="cm",dpi=300)
+```
+
+```{r}
+plot(ggemmeans(mod_abund_Erica_nozi_sig_ints,terms=c("fen","fire")))
+```
+
+#### Selected Sphagnum species
+
+##### Step 1: Models with all interactions (except fen*nutrient)
+
+For these models, we will use the subset of data_peat where total proportion of Sphagnum is > 0, and moist is not NA.
+
+```{r}
+nrow(subset(data_peat,tot_Sphagnum_prop>0&!is.na(moist)))
+```
+
+These are 88 rows of data_peat.
+
+Check combinations of the three factors and the fen-bog factor in this subset:
+
+```{r}
+with(subset(data_peat,tot_Sphagnum_prop>0&!is.na(moist)),table(fen,nutrient))
+with(subset(data_peat,tot_Sphagnum_prop>0&!is.na(moist)),table(fen,fire))
+with(subset(data_peat,tot_Sphagnum_prop>0&!is.na(moist)),table(fen,dry))
+```
+
+Interaction with nutrient should give problems as before, but I do not see why the others should give problems.
+
+In these models I include all interactions of fen with the other variables (except for fen*nutrient which will give problems).
+
+```{r}
+mod_abund_Medium_all_ints<-glmmTMB(Medium_prop~(age+temp+moist+
+                            fire+dry)*fen+nutrient,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_all_ints<-glmmTMB(Fuscum_prop~(age+temp+moist+
+                            fire+dry)*fen+nutrient,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_all_ints<-glmmTMB(Rubellum_prop~(age+temp+moist+
+                            fire+dry)*fen+nutrient,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Balticum_all_ints<-glmmTMB(Balticum_prop~(age+temp+moist+
+                            fire+dry)*fen+nutrient,family="beta_family",
+                            ziformula=~.,data=data_peat) 
+mod_abund_Cuspidata_all_ints<-glmmTMB(Cuspidata_prop~(age+temp+moist+
+                            fire+dry)*fen+nutrient,family="beta_family",
+                             ziformula=~.,data=data_peat) 
+```
+
+I get these warnings for each model:
+Warning messages:
+1: In fitTMB(TMBStruc) :
+  Model convergence problem; non-positive-definite Hessian matrix. See vignette('troubleshooting')
+2: In fitTMB(TMBStruc) :
+  Model convergence problem; singular convergence (7). See vignette('troubleshooting')
+  
+```{r}
+summary(mod_abund_Medium_all_ints)
+summary(mod_abund_Fuscum_all_ints)
+summary(mod_abund_Rubellum_all_ints)
+summary(mod_abund_Balticum_all_ints)
+summary(mod_abund_Cuspidata_all_ints)
+```
+  
+And all the NaNs in the summaries.
+
+I looked here https://cran.r-project.org/web/packages/glmmTMB/vignettes/troubleshooting.html but I am not sure how to solve this. It might be that the model is overparameterized (i.e. the data does not contain enough information to estimate the parameters reliably). So maybe here you should try to test the interactions one by one. Although then you do it in a different way for the plant groups and for the selected Sphagnum species. But I cannot think of a better solution!
+
+##### Step 1 (alternative): Models testing interactions one by one (except fen*nutrient)
+
+Try to test each interaction separately (except with nutrient):
+
+```{r}
+mod_abund_Medium_age_int<-glmmTMB(Medium_prop~age*fen+temp+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Medium_temp_int<-glmmTMB(Medium_prop~age+temp*fen+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Medium_moist_int<-glmmTMB(Medium_prop~age+temp+moist*fen+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Medium_fire_int<-glmmTMB(Medium_prop~age+temp+moist+nutrient+
+                            fire*fen+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Medium_dry_int<-glmmTMB(Medium_prop~age+temp+moist+nutrient+
+                            fire+dry*fen,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_age_int<-glmmTMB(Fuscum_prop~age*fen+temp+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_temp_int<-glmmTMB(Fuscum_prop~age+temp*fen+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_moist_int<-glmmTMB(Fuscum_prop~age+temp+moist*fen+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_fire_int<-glmmTMB(Fuscum_prop~age+temp+moist+nutrient+
+                            fire*fen+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Fuscum_dry_int<-glmmTMB(Fuscum_prop~age+temp+moist+nutrient+
+                            fire+dry*fen,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_age_int<-glmmTMB(Rubellum_prop~age*fen+temp+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_temp_int<-glmmTMB(Rubellum_prop~age+temp*fen+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_moist_int<-glmmTMB(Rubellum_prop~age+temp+moist*fen+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_fire_int<-glmmTMB(Rubellum_prop~age+temp+moist+nutrient+
+                            fire*fen+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Rubellum_dry_int<-glmmTMB(Rubellum_prop~age+temp+moist+nutrient+
+                            fire+dry*fen,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Balticum_age_int<-glmmTMB(Balticum_prop~age*fen+temp+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Balticum_temp_int<-glmmTMB(Balticum_prop~age+temp*fen+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Balticum_moist_int<-glmmTMB(Balticum_prop~age+temp+moist*fen+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Balticum_fire_int<-glmmTMB(Balticum_prop~age+temp+moist+nutrient+
+                            fire*fen+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Balticum_dry_int<-glmmTMB(Balticum_prop~age+temp+moist+nutrient+
+                            fire+dry*fen,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Cuspidata_age_int<-glmmTMB(Cuspidata_prop~age*fen+temp+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Cuspidata_temp_int<-glmmTMB(Cuspidata_prop~age+temp*fen+moist+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Cuspidata_moist_int<-glmmTMB(Cuspidata_prop~age+temp+moist*fen+nutrient+
+                            fire+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Cuspidata_fire_int<-glmmTMB(Cuspidata_prop~age+temp+moist+nutrient+
+                            fire*fen+dry,family="beta_family",
+                          ziformula=~.,data=data_peat)
+mod_abund_Cuspidata_dry_int<-glmmTMB(Cuspidata_prop~age+temp+moist+nutrient+
+                            fire+dry*fen,family="beta_family",
+                          ziformula=~.,data=data_peat)
+```
+
+```{r}
+summary(mod_abund_Medium_age_int) # Model OK, interaction NS
+summary(mod_abund_Medium_temp_int) # Model OK, interaction NS
+summary(mod_abund_Medium_moist_int) # Model OK, interaction NS
+summary(mod_abund_Medium_fire_int) # Model OK, interaction NS
+summary(mod_abund_Medium_dry_int) # Model OK, interaction NS
+summary(mod_abund_Fuscum_age_int) # NaNs produced
+summary(mod_abund_Fuscum_temp_int) # NaNs produced
+summary(mod_abund_Fuscum_moist_int) # NaNs produced
+summary(mod_abund_Fuscum_fire_int) # NaNs produced
+summary(mod_abund_Fuscum_dry_int) # NaNs produced
+summary(mod_abund_Rubellum_age_int) # NaNs produced
+summary(mod_abund_Rubellum_temp_int) # NaNs produced
+summary(mod_abund_Rubellum_moist_int) # NaNs produced
+summary(mod_abund_Rubellum_fire_int) # NaNs produced
+summary(mod_abund_Rubellum_dry_int) # NaNs produced
+summary(mod_abund_Balticum_age_int) # NaNs produced
+summary(mod_abund_Balticum_temp_int) # NaNs produced
+summary(mod_abund_Balticum_moist_int) # NaNs produced
+summary(mod_abund_Balticum_fire_int) # NaNs produced
+summary(mod_abund_Balticum_dry_int) # NaNs produced
+summary(mod_abund_Cuspidata_age_int) # NaNs produced
+summary(mod_abund_Cuspidata_temp_int) # NaNs produced
+summary(mod_abund_Cuspidata_moist_int) # NaNs produced
+summary(mod_abund_Cuspidata_fire_int) # NaNs produced
+summary(mod_abund_Cuspidata_dry_int) # NaNs produced
+```
+
+I am not sure why the models for Medium work OK, but not the models for the other species. I guess it might also be a problem of sample size - maybe there is not enough data to estimate so many parameters in the model. These models have 88 observations, while the moddels for the plant groups have 108 observations, and this might make a difference (although still not sure why it worked in the case of Medium). Anyway, I think it might be better to only test the interactions for the plant groups (i.e. total Sphagnum, Erio, Erica, Carex),but not for the Sphagnum species. You can say in the text that you did not test the interactions for Sphagnum species because of the reduced sample size. 
+
+# Combined plots
+
+## Figure 1: Ordination
+
+Check: 
+https://rstudio-pubs-static.s3.amazonaws.com/694016_e2d53d65858d4a1985616fa3855d237f.html
+
+### APPENDICES: Wtih temperature and age
+
+Ordination plot with vegan:
+
+```{r}
+ordination_plot<-ordiplot(ordi6,display = c('species', 'sites', 'bp'))
+```
+
+Extract information on the locations of sites (circles in the ordiplot) via function sites.long. Information on characteristics of the sites is added via the argument of env.data.
+
+Extract information on species with function species.long.
+
+```{r}
+sites.long1 <- sites.long(ordination_plot, env.data=data_ordi2)
+species.long2 <- species.long(ordination_plot)
+row.names(species.long2)<-c("Balticum","Medium","Cuspidata","Austinii","Fuscum",
+                            "Rubellum","Acutifolia","Deformed Acutifolia",
+                            "Angustifolium","Tenellum","Papillosum","Fallax" )
+head(sites.long1)
+species.long2
+```
+
+```{r}
+vectors.long3  <- data.frame(summary(ordi6)$biplot[,1:2])
+row.names(vectors.long3)<-c("Age","Temperature","Moisture","Nutrient input = 1",
+                            "Fire = 1","Dry period = 1")
+```
+
+```{r}
+figure1app1_a <- ggplot() + 
+  geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+  geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+  xlab("Axis 1 (14.1%)") + ylab("Axis 2 (6.4%)") +  coord_fixed()+
+  scale_x_continuous(sec.axis = dup_axis(labels=NULL, name=NULL)) +
+  scale_y_continuous(sec.axis = dup_axis(labels=NULL, name=NULL)) +  
+  geom_point(data=sites.long1,aes(x=axis1, y=axis2),
+             size=3,alpha=0.3,shape=16,color="darkturquoise") + 
+  geom_point(data=species.long2,aes(x=axis1, y=axis2),
+             size=2,shape=1,color="brown2") +
+  geom_text_repel(data=species.long2,aes(x=axis1, y=axis2, label=labels),
+                  colour="brown2",size=3,family="serif")+
+  geom_segment(data=vectors.long3, aes(x=0, y=0, xend=CAP1*2, yend=CAP2*2), 
+               color="black", size=0.5,arrow=arrow(length=unit(0.02,"npc"))) +
+  geom_text_repel(data=vectors.long3[1,],
+                  aes(x=CAP1*2.15,y=CAP2*2.05,
+                      label=rownames(vectors.long3[1,])), 
+            cex=3,direction="both",segment.size=0.25,color="black",
+            family="serif") +
+  geom_text_repel(data=vectors.long3[2,],
+                  aes(x=CAP1*2.4,y=CAP2*2.3,
+                      label=rownames(vectors.long3[2,])), 
+            cex=3,direction="both",segment.size=0.25,color="black",
+            family="serif") +
+  geom_text_repel(data=vectors.long3[3,],
+                  aes(x=CAP1*2.5,y=CAP2*2.3,
+                      label=rownames(vectors.long3[3,])), 
+            cex=3,direction="both",segment.size=0.25,color="black",
+            family="serif") +
+  geom_text_repel(data=vectors.long3[4,],
+                  aes(x=CAP1*2.4,y=CAP2*2.2,
+                      label=rownames(vectors.long3[4,])), 
+            cex=3,direction="both",segment.size=0.25,color="black",
+            family="serif") +
+  geom_text_repel(data=vectors.long3[5,],
+                  aes(x=CAP1*3.5,y=CAP2*2.5,
+                      label=rownames(vectors.long3[5,])), 
+            cex=3,direction="both",segment.size=0.25,color="black",
+            family="serif") +
+  geom_text_repel(data=vectors.long3[6,],
+                  aes(x=CAP1*7,y=CAP2*3.5,
+                      label=rownames(vectors.long3[6,])), 
+            cex=3,direction="both",segment.size=0.25,color="black",
+            family="serif") +
+  my_theme()
+figure1app1_b<-ggplot(data.frame(hierpart1$Hier.part)%>%
+         rownames_to_column(var="variable")%>%
+         mutate(variable=c("Age","Temperature","Moisture",
+                           "Nutrient input","Fire","Dry period"))%>%
+         mutate(variable=factor(variable,
+                                levels=c("Age","Temperature","Moisture",
+                                         "Nutrient input","Fire","Dry period"))),
+       aes(x=variable,y=I.perc...))+geom_bar(stat = "identity")+
+  my_theme()+xlab(NULL)+ylab("Individual effect to R square (%)")
+figure1app1<-cowplot::plot_grid(figure1app1_a,figure1app1_b,ncol=2,labels=c("A)","B)"),
+                   label_fontfamily="serif",align="hv")
+figure1app1  
+ggsave(filename="output/figures/figure1app1.tiff",plot=figure1app1,
+       width=30,height=14,units="cm",dpi=300)
+ggsave(filename="output/figures/figure1app1.pdf",plot=figure1app1,
+       width=30,height=14,units="cm",dpi=300)
+```
+
+### MAIN TEXT: With temperature
+
+Ordination plot with vegan:
+
+```{r}
+ordination_plot_temp<-ordiplot(ordi_temp,display = c('species', 'sites', 'bp'))
+```
+
+Extract information on the locations of sites (circles in the ordiplot) via function sites.long. Information on characteristics of the sites is added via the argument of env.data.
+
+Extract information on species with function species.long.
+
+```{r}
+sites.long1_temp <- sites.long(ordination_plot_temp, env.data=data_ordi2)
+species.long2_temp <- species.long(ordination_plot_temp)
+row.names(species.long2_temp)<-c("Balticum","Medium","Cuspidata","Austinii",
+                                 "Fuscum","Rubellum","Acutifolia",
+                                 "Deformed Acutifolia","Angustifolium",
+                                 "Tenellum","Papillosum","Fallax" )
+head(sites.long1_temp)
+species.long2_temp
+```
+
+```{r}
+vectors.long3_temp  <- data.frame(summary(ordi_temp)$biplot[,1:2])
+row.names(vectors.long3_temp)<-c("Temperature","Moisture","Nutrient input = 1",
+                            "Fire = 1","Dry period = 1")
+```
+
+```{r}
+figure1_a <- ggplot() + 
+  geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+  geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+  xlab("Axis 1 (11.4%)") + ylab("Axis 2 (6.0%)") +  coord_fixed()+
+  scale_x_continuous(sec.axis = dup_axis(labels=NULL, name=NULL)) +
+  scale_y_continuous(sec.axis = dup_axis(labels=NULL, name=NULL)) +  
+  geom_point(data=sites.long1_temp,aes(x=axis1, y=axis2),
+             size=3,alpha=0.3,shape=16,color="darkturquoise") + 
+  geom_point(data=species.long2_temp,aes(x=axis1, y=axis2),
+             size=2,shape=1,color="brown2") +
+  geom_text_repel(data=species.long2_temp,aes(x=axis1, y=axis2, label=labels),
+                  colour="brown2",size=3,family="serif")+
+  geom_segment(data=vectors.long3_temp, aes(x=0, y=0, xend=CAP1*2, yend=CAP2*2), 
+               color="black", size=0.5,arrow=arrow(length=unit(0.02,"npc"))) +
+  geom_text_repel(data=vectors.long3_temp[1,],
+                  aes(x=CAP1*2.16,y=CAP2*2.4,
+                      label=rownames(vectors.long3_temp[1,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  geom_text_repel(data=vectors.long3_temp[2,],
+                  aes(x=CAP1*2.3,y=CAP2*2.3,
+                      label=rownames(vectors.long3_temp[2,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  geom_text_repel(data=vectors.long3_temp[3,],
+                  aes(x=CAP1*2.5,y=CAP2*2.3,
+                      label=rownames(vectors.long3_temp[3,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  geom_text_repel(data=vectors.long3_temp[4,],
+                  aes(x=CAP1*2.7,y=CAP2*2.2,
+                      label=rownames(vectors.long3_temp[4,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  geom_text_repel(data=vectors.long3_temp[5,],
+                  aes(x=CAP1*4.5,y=CAP2*2.5,
+                      label=rownames(vectors.long3_temp[5,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  my_theme()
+figure1_b<-ggplot(data.frame(hierpart_temp$Hier.part)%>%
+         rownames_to_column(var="variable")%>%
+         mutate(variable=c("Temperature","Moisture",
+                           "Nutrient input","Fire","Dry period"))%>%
+         mutate(variable=factor(variable,
+                                levels=c("Temperature","Moisture",
+                                         "Nutrient input","Fire","Dry period"))),
+       aes(x=variable,y=I.perc...))+geom_bar(stat = "identity")+
+  my_theme()+xlab(NULL)+ylab("Individual effect to R square (%)")
+figure1<-cowplot::plot_grid(figure1_a,figure1_b,ncol=2,labels=c("A)","B)"),
+                   label_fontfamily="serif",align="hv")
+figure1  
+ggsave(filename="output/figures/figure1.tiff",plot=figure1,
+       width=30,height=14,units="cm",dpi=300)
+ggsave(filename="output/figures/figure1.pdf",plot=figure1,
+       width=30,height=14,units="cm",dpi=300)
+```
+
+### APPENDICES: With age
+
+Ordination plot with vegan:
+
+```{r}
+ordination_plot_age<-ordiplot(ordi_age,display = c('species', 'sites', 'bp'))
+```
+
+Extract information on the locations of sites (circles in the ordiplot) via function sites.long. Information on characteristics of the sites is added via the argument of env.data.
+
+Extract information on species with function species.long.
+
+```{r}
+sites.long1_age <- sites.long(ordination_plot_age, env.data=data_ordi2)
+species.long2_age <- species.long(ordination_plot_age)
+row.names(species.long2_age)<-c("Balticum","Medium","Cuspidata","Austinii",
+                                 "Fuscum","Rubellum","Acutifolia",
+                                 "Deformed Acutifolia","Angustifolium",
+                                 "Tenellum","Papillosum","Fallax" )
+head(sites.long1_age)
+species.long2_age
+```
+
+```{r}
+vectors.long3_age  <- data.frame(summary(ordi_age)$biplot[,1:2])
+row.names(vectors.long3_age)<-c("Age","Moisture","Nutrient input = 1",
+                            "Fire = 1","Dry period = 1")
+```
+
+```{r}
+figure1app2_a <- ggplot() + 
+  geom_vline(xintercept = c(0), color = "grey70", linetype = 2) +
+  geom_hline(yintercept = c(0), color = "grey70", linetype = 2) +
+  xlab("Axis 1 (14.0%)") + ylab("Axis 2 (6.4%)") +  coord_fixed()+
+  scale_x_continuous(sec.axis = dup_axis(labels=NULL, name=NULL)) +
+  scale_y_continuous(sec.axis = dup_axis(labels=NULL, name=NULL)) +  
+  geom_point(data=sites.long1_age,aes(x=axis1, y=axis2),
+             size=3,alpha=0.3,shape=16,color="darkturquoise") + 
+  geom_point(data=species.long2_age,aes(x=axis1, y=axis2),
+             size=2,shape=1,color="brown2") +
+  geom_text_repel(data=species.long2_age,aes(x=axis1, y=axis2, label=labels),
+                  colour="brown2",size=3,family="serif")+
+  geom_segment(data=vectors.long3_age, aes(x=0, y=0, xend=CAP1*2, yend=CAP2*2), 
+               color="black", size=0.5,arrow=arrow(length=unit(0.02,"npc"))) +
+  geom_text_repel(data=vectors.long3_age[1,],
+                  aes(x=CAP1*2.16,y=CAP2*2.4,
+                      label=rownames(vectors.long3_age[1,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  geom_text_repel(data=vectors.long3_age[2,],
+                  aes(x=CAP1*2.3,y=CAP2*2.3,
+                      label=rownames(vectors.long3_age[2,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  geom_text_repel(data=vectors.long3_age[3,],
+                  aes(x=CAP1*2.5,y=CAP2*2.3,
+                      label=rownames(vectors.long3_age[3,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  geom_text_repel(data=vectors.long3_age[4,],
+                  aes(x=CAP1*2.7,y=CAP2*2.2,
+                      label=rownames(vectors.long3_age[4,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  geom_text_repel(data=vectors.long3_age[5,],
+                  aes(x=CAP1*4.5,y=CAP2*2.5,
+                      label=rownames(vectors.long3_age[5,])), 
+                  cex=3,direction="both",segment.size=0.25,color="black",
+                  family="serif") +
+  my_theme()
+figure1app2_b<-ggplot(data.frame(hierpart_age$Hier.part)%>%
+         rownames_to_column(var="variable")%>%
+         mutate(variable=c("Age","Moisture",
+                           "Nutrient input","Fire","Dry period"))%>%
+         mutate(variable=factor(variable,
+                                levels=c("Age","Moisture",
+                                         "Nutrient input","Fire","Dry period"))),
+       aes(x=variable,y=I.perc...))+geom_bar(stat = "identity")+
+  my_theme()+xlab(NULL)+ylab("Individual effect to R square (%)")
+figure1app2<-cowplot::plot_grid(figure1app2_a,figure1app2_b,ncol=2,labels=c("A)","B)"),
+                   label_fontfamily="serif",align="hv")
+figure1app2  
+ggsave(filename="output/figures/figure1app2.tiff",plot=figure1app2,
+       width=30,height=14,units="cm",dpi=300)
+ggsave(filename="output/figures/figure1app2.pdf",plot=figure1app2,
+       width=30,height=14,units="cm",dpi=300)
+```
+
+<!-- ## OLD: Figure 2: Plant groups -->
+
+<!-- ```{r} -->
+<!-- figure2_a_1<-ggplot()+ -->
+<!--       geom_jitter(data=data_peat,aes(x=nutrient,y=tot_Sphagnum_prop), -->
+<!--                   position = position_jitter(0.1,0.01), -->
+<!--                   size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--       geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum, -->
+<!--                                            type="fixed",terms=c("nutrient"))), -->
+<!--                  aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--       geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum, -->
+<!--                                               type="fixed",terms=c("nutrient"))), -->
+<!--                     aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                     width=0.2,size=0.5)+ -->
+<!--   scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8,1))+ -->
+<!--   my_theme()+xlab("Nutrient input")+ylab("Total Sphagnum abundance") + -->
+<!--       theme(plot.margin = margin(l=10,r = 5,t=10,b=10) ) -->
+<!-- figure2_a_2<-ggplot()+ -->
+<!--       geom_jitter(data=data_peat,aes(x=dry,y=tot_Sphagnum_prop), -->
+<!--                   position = position_jitter(0.1,0.01), -->
+<!--                   size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--       geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum, -->
+<!--                                            type="fixed",terms=c("dry"))), -->
+<!--                  aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--       geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum, -->
+<!--                                               type="fixed",terms=c("dry"))), -->
+<!--                     aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                     width=0.2,size=0.5)+ -->
+<!--   scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8,1))+ -->
+<!--       my_theme()+xlab("Dry period")+ylab("Total Sphagnum abundance") +  -->
+<!--       theme(axis.text.y = element_blank(), -->
+<!--             axis.title.y = element_blank(), -->
+<!--             plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- figure2_b_1<-ggplot()+ -->
+<!--       geom_jitter(data=data_peat,aes(x=nutrient,y=Erio_prop), -->
+<!--                   position = position_jitter(0.1,0.01), -->
+<!--                   size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--       geom_point(data=data.frame(ggemmeans(mod_abund_Erio_nozi, -->
+<!--                                            type="fixed",terms=c("nutrient"))), -->
+<!--                  aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--       geom_errorbar(data=data.frame(ggemmeans(mod_abund_Erio_nozi, -->
+<!--                                               type="fixed",terms=c("nutrient"))), -->
+<!--                     aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                     width=0.2,size=0.5)+ -->
+<!--   scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8))+ -->
+<!--       my_theme()+xlab("Nutrient input")+ylab("Erio abundance")+ -->
+<!--       theme(plot.margin = margin(l=10,r = 5,t=10,b=10)) -->
+<!-- figure2_b_2<-ggplot()+ -->
+<!--       geom_jitter(data=data_peat,aes(x=dry,y=Erio_prop), -->
+<!--                   position = position_jitter(0.1,0.01), -->
+<!--                   size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--       geom_point(data=data.frame(ggemmeans(mod_abund_Erio_nozi, -->
+<!--                                            type="fixed",terms=c("dry"))), -->
+<!--                  aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--       geom_errorbar(data=data.frame(ggemmeans(mod_abund_Erio_nozi, -->
+<!--                                               type="fixed",terms=c("dry"))), -->
+<!--                     aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                     width=0.2,size=0.5)+ -->
+<!--   scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8))+ -->
+<!--       my_theme()+xlab("Dry period")+ylab("Erio abundance")+ -->
+<!--       theme(axis.text.y = element_blank(), -->
+<!--             axis.title.y = element_blank(), -->
+<!--             plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- figure2d_1<-ggplot()+ -->
+<!--       geom_ribbon(data=data.frame(ggemmeans(mod_abund_Carex_nozi, -->
+<!--                                             type="fixed",terms=c("temp[all]"))), -->
+<!--                   aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                   alpha=0.2)+ -->
+<!--       geom_line(data=data.frame(ggemmeans(mod_abund_Carex_nozi, -->
+<!--                                           type="fixed",terms=c("temp[all]"))), -->
+<!--                 aes(x=x,y=predicted))+ -->
+<!--       geom_point(data=subset(data_peat,Carex_prop>0),aes(x=temp,y=Carex_prop), -->
+<!--                  size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--       my_theme()+xlab("Temperature")+ylab("Carex abundance")+ -->
+<!--       theme(plot.margin = margin(l=10,r = 5,t=10,b=10) ) -->
+<!-- figure2_d_2<-ggplot()+ -->
+<!--       geom_jitter(data=data_peat,aes(x=nutrient,y=Carex_prop), -->
+<!--                   position = position_jitter(0.1,0.01), -->
+<!--                   size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--       geom_point(data=data.frame(ggemmeans(mod_abund_Carex_nozi, -->
+<!--                                            type="fixed",terms=c("nutrient"))), -->
+<!--                  aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--       geom_errorbar(data=data.frame(ggemmeans(mod_abund_Carex_nozi, -->
+<!--                                               type="fixed",terms=c("nutrient"))), -->
+<!--                     aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                     width=0.2,size=0.5)+ -->
+<!--       my_theme()+xlab("Nutrient input")+ylab("Carex abundance")+ -->
+<!--       theme(axis.text.y = element_blank(), -->
+<!--             axis.title.y = element_blank(), -->
+<!--             plot.margin = margin(l=5,r = 5,t=10,b=10)) -->
+<!-- figure2_d_3<-ggplot()+ -->
+<!--       geom_jitter(data=data_peat,aes(x=dry,y=Carex_prop), -->
+<!--                   position = position_jitter(0.1,0.01), -->
+<!--                   size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--       geom_point(data=data.frame(ggemmeans(mod_abund_Carex_nozi, -->
+<!--                                            type="fixed",terms=c("dry"))), -->
+<!--                  aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--       geom_errorbar(data=data.frame(ggemmeans(mod_abund_Carex_nozi, -->
+<!--                                               type="fixed",terms=c("dry"))), -->
+<!--                     aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                     width=0.2,size=0.5)+ -->
+<!--       my_theme()+xlab("Dry period")+ylab("Carex abundance")+ -->
+<!--       theme(axis.text.y = element_blank(), -->
+<!--             axis.title.y = element_blank(), -->
+<!--             plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- figure2_a<-ggarrange(# Total Sphagnum -->
+<!--       figure2_a_1,figure2_a_2,nrow=1) -->
+<!-- figure2_b<-ggarrange(# Erio -->
+<!--       figure2_b_1,figure2_b_2,nrow = 1) -->
+<!-- figure2_c<-ggarrange(# Erica -->
+<!--       plots_Erica+theme(plot.margin=margin(l = 5,t=10,b=10)),nrow = 1) -->
+<!-- figure2_d<-ggarrange(# Carex -->
+<!--       figure2d_1,figure2_d_2,figure2_d_3,nrow = 1) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- figure2<-cowplot::plot_grid( -->
+<!--   cowplot::plot_grid(figure2_a,figure2_b,ncol=2,labels=c("A)","B)"), -->
+<!--             label_fontfamily="serif")+ -->
+<!--     theme(plot.background=element_rect(fill="white", color = NA)), -->
+<!--   cowplot::plot_grid(figure2_c,figure2_d,ncol=2,labels=c("C)","D)"), -->
+<!--             label_fontfamily="serif",rel_widths=c(0.27,0.73))+ -->
+<!--     theme(plot.background=element_rect(fill="white", color = NA)), -->
+<!--   nrow=2) -->
+<!-- figure2 -->
+<!-- ggsave(filename="output/figures/figure2.tiff",plot=figure2, -->
+<!--        width=28,height=21,units="cm",dpi=300) -->
+<!-- ggsave(filename="output/figures/figure2.pdf",plot=figure2, -->
+<!--        width=28,height=21,units="cm",dpi=300) -->
+<!-- ``` -->
+
+<!-- ## OLD: Figure 3: Selected Sphagnum species: Fuscum and Rubellum -->
+
+<!-- ```{r} -->
+<!-- figure3_a_1<-ggplot()+ -->
+<!--     geom_ribbon(data=average_prediction_Fuscum_moist, -->
+<!--                 aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high), -->
+<!--                 alpha=0.2)+ -->
+<!--     geom_line(data=average_prediction_Fuscum_moist, -->
+<!--               aes(x=x,y=1-predicted))+ -->
+<!--     geom_point(data=data_peat,aes(x=moist,y=Fuscum_prop), -->
+<!--               size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     my_theme()+xlab("Moisture")+ylab("Probability of Fuscum presence")+ -->
+<!--   theme(plot.margin = margin(l=10,r = 5,t=10,b=10) ) -->
+<!-- figure3_a_2<-ggplot()+ -->
+<!--     geom_jitter(data=data_peat,aes(x=nutrient,y=Fuscum_prop), -->
+<!--                 position=position_jitter(0.1,0.01), -->
+<!--                 size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     geom_point(data=average_prediction_Fuscum_nutrient, -->
+<!--                aes(x=x,y=1-predicted),size=4,shape=16)+ -->
+<!--     geom_errorbar(data=average_prediction_Fuscum_nutrient, -->
+<!--                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high), -->
+<!--                width=0.2,size=0.5)+ -->
+<!--     my_theme()+xlab("Nutrient")+ylab("Probability of Fuscum presence")+ -->
+<!--   theme(axis.text.y = element_blank(), -->
+<!--             axis.title.y = element_blank(), -->
+<!--             plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- figure3_b_1<-ggplot()+ -->
+<!--     geom_ribbon(data=data.frame(ggemmeans(mod_abund_Fuscum, -->
+<!--                                           type="fixed",terms=c("age"))), -->
+<!--                                 aes(x=x,y=predicted, -->
+<!--                                     ymin=conf.low,ymax=conf.high),alpha=0.2)+ -->
+<!--     geom_line(data=data.frame(ggemmeans(mod_abund_Fuscum, -->
+<!--                                           type="fixed",terms=c("age"))), -->
+<!--                               aes(x=x,y=predicted))+ -->
+<!--     geom_point(data=data_peat,aes(x=age,y=Fuscum_prop), -->
+<!--               size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     my_theme()+xlab("Age")+ylab("Fuscum abundance")+ -->
+<!--   theme(plot.margin = margin(l=10,r = 5,t=10,b=10) ) -->
+<!-- figure3_b_2<-ggplot()+ -->
+<!--     geom_jitter(data=data_peat,aes(x=dry,y=Fuscum_prop), -->
+<!--                 position = position_jitter(0.1,0.01), -->
+<!--                 size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     geom_point(data=data.frame(ggemmeans(mod_abund_Fuscum, -->
+<!--                                          type="fixed",terms=c("dry"))), -->
+<!--                aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--     geom_errorbar(data=data.frame(ggemmeans(mod_abund_Fuscum, -->
+<!--                                             type="fixed",terms=c("dry"))), -->
+<!--                   aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                   width=0.2,size=0.5)+ -->
+<!--     my_theme()+xlab("Dry period")+ylab("Fuscum abundance")+ -->
+<!--   theme(axis.text.y = element_blank(), -->
+<!--             axis.title.y = element_blank(), -->
+<!--             plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- figure3_c_1<-ggplot()+ -->
+<!--     geom_jitter(data=data_peat,aes(x=nutrient,y=Rubellum_prop), -->
+<!--                 position=position_jitter(0.1,0.01), -->
+<!--                 size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     geom_point(data=average_prediction_Rubellum_nutrient, -->
+<!--                aes(x=x,y=1-predicted),size=4,shape=16)+ -->
+<!--     geom_errorbar(data=average_prediction_Rubellum_nutrient, -->
+<!--                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high), -->
+<!--                width=0.2,size=0.5)+ -->
+<!--     my_theme()+xlab("Nutrient")+ylab("Probability of Rubellum presence")+ -->
+<!--   theme(plot.margin = margin(l=10,r = 5,t=10,b=10) ) -->
+<!-- figure3_c_2<-ggplot()+ -->
+<!--     geom_jitter(data=data_peat,aes(x=dry,y=Rubellum_prop), -->
+<!--                 position=position_jitter(0.1,0.01), -->
+<!--                 size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     geom_point(data=average_prediction_Rubellum_dry, -->
+<!--                aes(x=x,y=1-predicted),size=4,shape=16)+ -->
+<!--     geom_errorbar(data=average_prediction_Rubellum_dry, -->
+<!--                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high), -->
+<!--                width=0.2,size=0.5)+ -->
+<!--     my_theme()+xlab("Dry period")+ylab("Probability of Rubellum presence")+ -->
+<!--   theme(axis.text.y = element_blank(), -->
+<!--             axis.title.y = element_blank(), -->
+<!--             plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- figure3_d<-ggplot()+ -->
+<!--     geom_jitter(data=data_peat,aes(x=fire,y=Rubellum_prop), -->
+<!--                 position = position_jitter(0.1,0.01), -->
+<!--                 size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     geom_point(data=data.frame(ggemmeans(mod_abund_Rubellum, -->
+<!--                                          type="fixed",terms=c("fire"))), -->
+<!--                aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--     geom_errorbar(data=data.frame(ggemmeans(mod_abund_Rubellum, -->
+<!--                                             type="fixed",terms=c("fire"))), -->
+<!--                   aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                   width=0.2,size=0.5)+ -->
+<!--     my_theme()+xlab("Fire")+ylab("Rubellum abundance")+ -->
+<!--   theme(plot.margin=margin(r = 10,l = 5,t=10,b=10)) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- figure3_a<-ggarrange(figure3_a_1,figure3_a_2,nrow=1) -->
+<!-- figure3_b<-ggarrange(figure3_b_1,figure3_b_2,nrow=1) -->
+<!-- figure3_c<-ggarrange(figure3_c_1,figure3_c_2,nrow=1) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- figure3<-cowplot::plot_grid( -->
+<!--   cowplot::plot_grid(figure3_a,figure3_b,ncol=2,labels=c("A)","B)"), -->
+<!--             label_fontfamily="serif")+ -->
+<!--     theme(plot.background=element_rect(fill="white", color = NA)), -->
+<!--   cowplot::plot_grid(figure3_c,figure3_d,ncol=2,labels=c("C)","D)"), -->
+<!--             label_fontfamily="serif",rel_widths=c(0.64,0.36))+ -->
+<!--     theme(plot.background=element_rect(fill="white", color = NA)), -->
+<!--   nrow=2) -->
+<!-- figure3 -->
+<!-- ggsave(filename="output/figures/figure3.tiff",plot=figure3, -->
+<!--        width=28,height=21,units="cm",dpi=300) -->
+<!-- ggsave(filename="output/figures/figure3.pdf",plot=figure3, -->
+<!--        width=28,height=21,units="cm",dpi=300) -->
+<!-- ``` -->
+
+<!-- ## OLD: Figure 4: Selected Sphagnum species: Medium and Balticum -->
+
+<!-- ```{r} -->
+<!-- figure4_a<-ggarrange( -->
+<!--   ggplot()+ -->
+<!--     geom_ribbon(data=average_prediction_Medium_age, -->
+<!--                 aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high), -->
+<!--                 alpha=0.2)+ -->
+<!--     geom_line(data=average_prediction_Medium_age, -->
+<!--               aes(x=x,y=1-predicted))+ -->
+<!--     geom_point(data=data_peat,aes(x=age,y=Medium_prop), -->
+<!--               size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     my_theme()+xlab("Age")+ylab("Probability of Medium presence")+ -->
+<!--     theme(plot.margin=margin(l = 5,t=10,b=10)),nrow = 1) -->
+<!-- figure4_b_1<-ggplot()+ -->
+<!--   geom_jitter(data=data_peat,aes(x=nutrient,y=Medium_prop), -->
+<!--               position = position_jitter(0.1,0.01), -->
+<!--               size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--   geom_point(data=data.frame(ggemmeans(mod_abund_Medium, -->
+<!--                                          type="fixed",terms=c("nutrient"))), -->
+<!--              aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--   geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium, -->
+<!--                                           type="fixed",terms=c("nutrient"))), -->
+<!--                 aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                 width=0.2,size=0.5)+ -->
+<!--   my_theme()+xlab("Nutrient input")+ylab("Medium abundance")+ -->
+<!--   theme(plot.margin = margin(l=10,r = 5,t=10,b=10)) -->
+<!-- figure4_b_2<-ggplot()+ -->
+<!--   geom_jitter(data=data_peat,aes(x=fire,y=Medium_prop), -->
+<!--               position = position_jitter(0.1,0.01), -->
+<!--               size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--   geom_point(data=data.frame(ggemmeans(mod_abund_Medium, -->
+<!--                                        type="fixed",terms=c("fire"))), -->
+<!--              aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--   geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium, -->
+<!--                                           type="fixed",terms=c("fire"))), -->
+<!--                 aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                 width=0.2,size=0.5)+ -->
+<!--   my_theme()+xlab("Fire")+ylab("Medium abundance")+ -->
+<!--   theme(axis.text.y = element_blank(), -->
+<!--         axis.title.y = element_blank(), -->
+<!--         plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- figure4_b_3<-ggplot()+ -->
+<!--   geom_jitter(data=data_peat,aes(x=dry,y=Medium_prop), -->
+<!--               position = position_jitter(0.1,0.01), -->
+<!--               size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--   geom_point(data=data.frame(ggemmeans(mod_abund_Medium, -->
+<!--                                        type="fixed",terms=c("dry"))), -->
+<!--              aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--   geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium, -->
+<!--                                           type="fixed",terms=c("dry"))), -->
+<!--                 aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                 width=0.2,size=0.5)+ -->
+<!--   my_theme()+xlab("Dry period")+ylab("Medium abundance")+ -->
+<!--   theme(axis.text.y = element_blank(), -->
+<!--         axis.title.y = element_blank(), -->
+<!--         plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- figure4_c<-ggplot()+ -->
+<!--     geom_ribbon(data=average_prediction_Balticum_age, -->
+<!--                 aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high), -->
+<!--                 alpha=0.2)+ -->
+<!--     geom_line(data=average_prediction_Balticum_age, -->
+<!--               aes(x=x,y=1-predicted))+ -->
+<!--     geom_point(data=data_peat,aes(x=age,y=Balticum_prop), -->
+<!--               size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     my_theme()+xlab("Age")+ylab("Probability of Balticum presence")+ -->
+<!--   theme(plot.margin=margin(l = 5,t=10,b=10)) -->
+<!-- figure4_d_1<-ggplot()+ -->
+<!--     geom_ribbon(data=data.frame(ggemmeans(mod_abund_Balticum, -->
+<!--                                           type="fixed",terms=c("moist[all]"))), -->
+<!--                 aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),alpha=0.2)+ -->
+<!--     geom_line(data=data.frame(ggemmeans(mod_abund_Balticum, -->
+<!--                                         type="fixed",terms=c("moist[all]"))), -->
+<!--               aes(x=x,y=predicted))+ -->
+<!--     geom_point(data=data_peat,aes(x=moist,y=Balticum_prop), -->
+<!--                size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     my_theme()+xlab("Moisture")+ylab("Balticum abundance")+ -->
+<!--   theme(plot.margin = margin(l=10,r = 5,t=10,b=10) ) -->
+<!-- figure4_d_2<-ggplot()+ -->
+<!--     geom_jitter(data=data_peat,aes(x=dry,y=Balticum_prop), -->
+<!--                 position = position_jitter(0.1,0.01), -->
+<!--                 size=3,alpha=0.3,shape=16,color="darkturquoise")+ -->
+<!--     geom_point(data=data.frame(ggemmeans(mod_abund_Balticum, -->
+<!--                                          type="fixed",terms=c("dry"))), -->
+<!--                aes(x=x,y=predicted),size=4,shape=16)+ -->
+<!--     geom_errorbar(data=data.frame(ggemmeans(mod_abund_Balticum, -->
+<!--                                             type="fixed",terms=c("dry"))), -->
+<!--                   aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high), -->
+<!--                   width=0.2,size=0.5)+ -->
+<!--     my_theme()+xlab("Dry period")+ylab("Balticum abundance")+ -->
+<!--   theme(axis.text.y = element_blank(), -->
+<!--             axis.title.y = element_blank(), -->
+<!--             plot.margin = margin(r = 10, l = 5,t=10,b=10)) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- figure4_b<-ggarrange(figure4_b_1,figure4_b_2,figure4_b_3,nrow=1) -->
+<!-- figure4_d<-ggarrange(figure4_d_1,figure4_d_2,nrow=1) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- figure4<-cowplot::plot_grid( -->
+<!--   cowplot::plot_grid(figure4_a,figure4_b,ncol=2,labels=c("A)","B)"), -->
+<!--             label_fontfamily="serif",rel_widths=c(0.3,0.7))+ -->
+<!--     theme(plot.background=element_rect(fill="white", color = NA)), -->
+<!--   cowplot::plot_grid(figure4_c,figure4_d,ncol=2,labels=c("C)","D)"), -->
+<!--             label_fontfamily="serif",rel_widths=c(0.35,0.65))+ -->
+<!--     theme(plot.background=element_rect(fill="white", color = NA)), -->
+<!--   nrow=2) -->
+<!-- figure4 -->
+<!-- ggsave(filename="output/figures/figure4.tiff",plot=figure4, -->
+<!--        width=28,height=21,units="cm",dpi=300) -->
+<!-- ggsave(filename="output/figures/figure4.pdf",plot=figure4, -->
+<!--        width=28,height=21,units="cm",dpi=300) -->
+<!-- ``` -->
+
+<!-- ## OLD: Figure 5: interactions -->
+
+<!-- ```{r} -->
+<!-- figure5<-cowplot::plot_grid(plot_sphagnum_int,plot_Erica_int,ncol=2, -->
+<!--                             labels=c("A)","B)"),label_fontfamily="serif") -->
+<!-- figure5 -->
+<!-- ggsave(filename="output/figures/figure5.tiff",plot=figure5, -->
+<!--        width=24,height=12,units="cm",dpi=300) -->
+<!-- ggsave(filename="output/figures/figure5.pdf",plot=figure5, -->
+<!--        width=24,height=12,units="cm",dpi=300) -->
+<!-- ``` -->
+
+## Figure 2: Plant gropus
+
+Create average predictions
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_tot_Sphagnum_temp<-rbind(
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),std.error=mean(std.error),
+                          conf.low=mean(conf.low),conf.high=mean(conf.high))
+```
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_tot_Sphagnum_nutrient<-rbind(
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("nutrient"),
+                   condition=c(fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("nutrient"),
+                   condition=c(fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("nutrient"),
+                   condition=c(fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_tot_Sphagnum_temp,type="zi_prob",
+                   terms=c("nutrient"),
+                   condition=c(fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="d")
+  )%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+figure2_a_1<-
+  # Total Sphagnum presence ~ temp
+  ggplot()+
+  geom_ribbon(data=average_prediction_tot_Sphagnum_temp,
+              aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+              alpha=0.2)+
+  geom_line(data=average_prediction_tot_Sphagnum_temp,
+            aes(x=x,y=1-predicted))+
+  geom_point(data=data_peat,aes(x=temp,y=tot_Sphagnum_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Probability of total Sphagnum presence")+
+  scale_y_continuous(limits=c(0,1),breaks=c(0,0.25,0.5,0.75,1))+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
+figure2_a_2<-
+  # Total Sphagnum presence ~ nutr
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=nutrient,y=tot_Sphagnum_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=average_prediction_tot_Sphagnum_nutrient,
+             aes(x=x,y=1-predicted),size=4,shape=16)+
+  geom_errorbar(data=average_prediction_tot_Sphagnum_nutrient,
+                    aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                width=0.2,size=0.5)+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8,1))+
+  my_theme()+xlab("Nutrient input")+
+  ylab("Probability of total Sphagnum presence") +
+  scale_y_continuous(limits=c(0,1),breaks=c(0,0.25,0.5,0.75,1))+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure2_b_1<-
+  # Total Sphagnum abundance ~ temp
+  ggplot()+
+  geom_ribbon(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum_temp,
+                                        type="fixed",terms=c("temp[all]"))),
+              aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),alpha=0.2)+
+  geom_line(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum_temp,
+                                      type="fixed",terms=c("temp[all]"))),
+            aes(x=x,y=predicted))+
+  geom_point(data=data_peat,aes(x=temp,y=tot_Sphagnum_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Total Sphagnum abundance")+
+  scale_y_continuous(limits=c(0,1),breaks=c(0,0.25,0.5,0.75,1))+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
+figure2_b_2<-
+  # Total Sphagnum abundance ~ nutr
+  ggplot()+
+      geom_jitter(data=data_peat,aes(x=nutrient,y=tot_Sphagnum_prop),
+                  position = position_jitter(0.1,0.01),
+                  size=3,alpha=0.3,shape=16,color="darkturquoise")+
+      geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum_temp,
+                                           type="fixed",terms=c("nutrient"))),
+                 aes(x=x,y=predicted),size=4,shape=16)+
+      geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum_temp,
+                                              type="fixed",terms=c("nutrient"))),
+                    aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                    width=0.2,size=0.5)+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8))+
+      my_theme()+xlab("Nutrient input")+ylab("Total Sphagnum abundance")+
+  scale_y_continuous(limits=c(0,1),breaks=c(0,0.25,0.5,0.75,1))+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure2_b_3<-
+  # Total Sphagnum abundance ~ dry
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=dry,y=tot_Sphagnum_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum_temp,
+                                       type="fixed",terms=c("dry"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_tot_Sphagnum_temp,
+                                          type="fixed",terms=c("dry"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8,1))+
+  my_theme()+xlab("Dry period")+ylab("Total Sphagnum abundance") + 
+  scale_y_continuous(limits=c(0,1),breaks=c(0,0.25,0.5,0.75,1))+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure2_c_1<-
+  # Erio abundance ~ temp
+  ggplot()+
+  geom_ribbon(data=data.frame(ggemmeans(mod_abund_Erio_nozi_temp,
+                                        type="fixed",terms=c("temp[all]"))),
+              aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),alpha=0.2)+
+  geom_line(data=data.frame(ggemmeans(mod_abund_Erio_nozi_temp,
+                                      type="fixed",terms=c("temp[all]"))),
+            aes(x=x,y=predicted))+
+  geom_point(data=subset(data_peat,Erio_prop>0),aes(x=temp,y=Erio_prop),
+                 size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Erio abundance")+
+  scale_y_continuous(limits=c(0,1),breaks=c(0,0.25,0.5,0.75,1))+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
+figure2_c_2<-
+  # Erio abundance ~ nutr
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=nutrient,y=Erio_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Erio_nozi_temp,
+                                       type="fixed",terms=c("nutrient"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Erio_nozi_temp,
+                                          type="fixed",terms=c("nutrient"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8))+
+  my_theme()+xlab("Nutrient input")+ylab("Erio abundance")+
+  scale_y_continuous(limits=c(0,1),breaks=c(0,0.25,0.5,0.75,1))+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure2_c_3<-
+  # Erio abundance ~ dry
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=dry,y=Erio_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Erio_nozi_temp,
+                                       type="fixed",terms=c("dry"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Erio_nozi_temp,
+                                          type="fixed",terms=c("dry"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8))+
+  my_theme()+xlab("Dry period")+ylab("Erio abundance")+
+  scale_y_continuous(limits=c(0,1),breaks=c(0,0.25,0.5,0.75,1))+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure2_d_1<-
+  # Erica abundance ~ temp
+  ggplot()+
+  geom_ribbon(data=data.frame(ggemmeans(mod_abund_Erica_nozi_temp,
+                                        type="fixed",terms=c("temp[all]"))),
+              aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),alpha=0.2)+
+  geom_line(data=data.frame(ggemmeans(mod_abund_Erica_nozi_temp,
+                                      type="fixed",terms=c("temp[all]"))),
+            aes(x=x,y=predicted))+
+  geom_point(data=subset(data_peat,Erica_prop>0),aes(x=temp,y=Erica_prop),
+                 size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Erica abundance")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
+figure2_e_1<-
+  # Carex abundance ~ nutr
+   ggplot()+
+  geom_jitter(data=data_peat,aes(x=nutrient,y=Carex_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Carex_nozi_temp,
+                                       type="fixed",terms=c("nutrient"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Carex_nozi_temp,
+                                          type="fixed",terms=c("nutrient"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8))+
+  my_theme()+xlab("Nutrient input")+ylab("Carex abundance")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10))
+figure2_e_2<-
+  # Carex abundance ~ dry
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=dry,y=Carex_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Carex_nozi_temp,
+                                       type="fixed",terms=c("dry"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Carex_nozi_temp,
+                                          type="fixed",terms=c("dry"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  scale_y_continuous(breaks=c(0,0.2,0.4,0.6,0.8))+
+  my_theme()+xlab("Dry period")+ylab("Carex abundance")+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+```
+
+```{r}
+figure2_a<-ggarrange(# Total Sphagnum presence
+  figure2_a_1,figure2_a_2,nrow=1)
+figure2_b<-ggarrange(# Total Sphagnum abundance
+  figure2_b_1,figure2_b_2,figure2_b_3,nrow = 1)
+figure2_c<-ggarrange(# Erio
+  figure2_c_1,figure2_c_2,figure2_c_3,nrow=1)
+figure2_d<-ggarrange(# Erica
+  figure2_d_1+theme(plot.margin=margin(l = 5,t=10,b=10)),nrow = 1)
+figure2_e<-ggarrange(# Carex
+  figure2_e_1,figure2_e_2,nrow=1)
+```
+
+```{r}
+figure2_alternative<-
+  cowplot::plot_grid(
+    cowplot::plot_grid(figure2_a,figure2_b,figure2_c,ncol=1,
+    labels=c("A)","B)","C)"),label_fontfamily="serif"),
+    cowplot::plot_grid(figure2_d,figure2_e,ncol=2,labels=c("D)","E)"),
+                       label_fontfamily="serif",rel_widths=c(0.35,0.65)),ncol=1,
+    rel_heights=c(0.75,0.25))
+figure2_alternative
+ggsave(filename="output/figures/figure2_alternative.tiff",
+       plot=figure2_alternative,width=25,height=40,units="cm",dpi=300)
+ggsave(filename="output/figures/figure2_alternative.pdf",
+       plot=figure2_alternative,width=40,height=40,units="cm",dpi=300)
+```
+
+
+```{r}
+figure2<-cowplot::plot_grid(
+  cowplot::plot_grid(figure2_a,figure2_b,ncol=2,labels=c("A)","B)"),
+            label_fontfamily="serif")+
+    theme(plot.background=element_rect(fill="white", color = NA)),
+  cowplot::plot_grid(figure2_c,figure2_d,figure2_e,ncol=3,
+                     labels=c("C)","D)","E)"),
+            label_fontfamily="serif",rel_widths=c(0.50,0.17,0.33))+
+    theme(plot.background=element_rect(fill="white", color = NA)),
+  nrow=2)
+figure2
+ggsave(filename="output/figures/figure2.tiff",plot=figure2,
+       width=40,height=25,units="cm",dpi=300)
+ggsave(filename="output/figures/figure2.pdf",plot=figure2,
+       width=40,height=25,units="cm",dpi=300)
+```
+
+## Figure 3: Selected Sphagnum species: Fuscum and Rubellum
+
+Create average predictions
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Fuscum_moist<-rbind(
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%  # NaNs produced
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Fuscum_nutrient<-rbind(
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Fuscum_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="d")
+  )%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Rubellum_moist<-rbind(
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("moist[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%  # NaNs produced
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Rubellum_nutrient<-rbind(
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Rubellum_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="d")
+  )%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+``` 
+
+```{r}
+figure3_a_1<-
+  # Fusum presence ~ moist
+  ggplot()+
+  geom_ribbon(data=average_prediction_Fuscum_moist,
+              aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+              alpha=0.2)+
+  geom_line(data=average_prediction_Fuscum_moist,aes(x=x,y=1-predicted))+
+  geom_point(data=data_peat,aes(x=moist,y=Fuscum_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Moisture")+ylab("Probability of Fuscum presence")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
+figure3_a_2<-
+  # Fusum presence ~ nutr
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=nutrient,y=Fuscum_prop),
+              position=position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=average_prediction_Fuscum_nutrient,
+             aes(x=x,y=1-predicted),size=4,shape=16)+
+  geom_errorbar(data=average_prediction_Fuscum_nutrient,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Nutrient input")+ylab("Probability of Fuscum presence")+
+  theme(axis.text.y = element_blank(),axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure3_b_1<-
+  # Fuscum abundance ~ temp
+  ggplot()+
+  geom_ribbon(data=data.frame(ggemmeans(mod_abund_Fuscum_temp,
+                                        type="fixed",terms=c("temp"))),
+              aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),alpha=0.2)+
+  geom_line(data=data.frame(ggemmeans(mod_abund_Fuscum_temp,
+                                      type="fixed",terms=c("temp"))),
+            aes(x=x,y=predicted))+
+  geom_point(data=data_peat,aes(x=temp,y=Fuscum_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Fuscum abundance")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
+figure3_b_2<-
+  # Fuscum abundance ~ dry
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=dry,y=Fuscum_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Fuscum_temp,
+                                       type="fixed",terms=c("dry"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Fuscum_temp,
+                                          type="fixed",terms=c("dry"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Dry period")+ylab("Fuscum abundance")+
+  theme(axis.text.y = element_blank(),axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure3_c_1<-
+  # Rubellum presence ~ moist
+  ggplot()+
+  geom_ribbon(data=average_prediction_Rubellum_moist,
+              aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+              alpha=0.2)+
+  geom_line(data=average_prediction_Rubellum_moist,aes(x=x,y=1-predicted))+
+  geom_point(data=data_peat,aes(x=moist,y=Rubellum_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Moisture")+ylab("Probability of Rubellum presence")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )
+figure3_c_2<-
+  # Rubellum presence ~ nutr
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=nutrient,y=Rubellum_prop),
+              position=position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=average_prediction_Rubellum_nutrient,
+             aes(x=x,y=1-predicted),size=4,shape=16)+
+  geom_errorbar(data=average_prediction_Rubellum_nutrient,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Nutrient input")+ylab("Probability of Rubellum presence")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )+
+  theme(axis.text.y = element_blank(),axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure3_d_1<-
+  # Rubellum abundance ~ fire
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=fire,y=Rubellum_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Rubellum_temp,
+                                       type="fixed",terms=c("fire"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Rubellum_temp,
+                                          type="fixed",terms=c("fire"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Fire")+ylab("Rubellum abundance")+
+  theme(plot.margin=margin(r = 10,l = 5,t=10,b=10))
+```
+
+```{r}
+figure3_a<-ggarrange(figure3_a_1,figure3_a_2,nrow=1)
+figure3_b<-ggarrange(figure3_b_1,figure3_b_2,nrow=1)
+figure3_c<-ggarrange(figure3_c_1,figure3_c_2,nrow=1)
+```
+
+```{r}
+figure3<-cowplot::plot_grid(
+  cowplot::plot_grid(figure3_a,figure3_b,ncol=2,labels=c("A)","B)"),
+            label_fontfamily="serif")+
+    theme(plot.background=element_rect(fill="white", color = NA)),
+  cowplot::plot_grid(figure3_c,figure3_d,ncol=2,labels=c("C)","D)"),
+            label_fontfamily="serif",rel_widths=c(0.64,0.36))+
+    theme(plot.background=element_rect(fill="white", color = NA)),
+  nrow=2)
+figure3
+ggsave(filename="output/figures/figure3.tiff",plot=figure3,
+       width=28,height=21,units="cm",dpi=300)
+ggsave(filename="output/figures/figure3.pdf",plot=figure3,
+       width=28,height=21,units="cm",dpi=300)
+```
+
+## Figure 4: Selected Sphagnum species: Medium, Balticum and Cuspidata
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Medium_temp<-rbind(
+  tibble(ggpredict(mod_abund_Medium_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Medium_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Medium_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Medium_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_Medium_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_Medium_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_Medium_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_Medium_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),std.error=mean(std.error),
+                          conf.low=mean(conf.low),conf.high=mean(conf.high))
+```
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Balticum_temp<-rbind(
+  tibble(ggpredict(mod_abund_Balticum_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Balticum_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Balticum_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Balticum_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_Balticum_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_Balticum_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_Balticum_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_Balticum_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),std.error=mean(std.error),
+                          conf.low=mean(conf.low),conf.high=mean(conf.high))
+```
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Cuspidata_temp<-rbind(
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="d"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="e"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="f"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=0,fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="g"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("temp[all]"),
+                   condition=c(nutrient=1,fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="h")
+)%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),std.error=mean(std.error),
+                          conf.low=mean(conf.low),conf.high=mean(conf.high))
+```
+
+```{r}
+# Create average line among factors=0 and factors=1
+average_prediction_Cuspidata_nutrient<-rbind(
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=1)))%>%
+    select(-group)%>%mutate(type="a"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=0)))%>%
+    select(-group)%>%mutate(type="b"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=0,dry=1)))%>%
+    select(-group)%>%mutate(type="c"),
+  tibble(ggpredict(mod_abund_Cuspidata_temp,type="zi_prob",terms=c("nutrient"),
+                   condition=c(fire=1,dry=0)))%>%
+    select(-group)%>%mutate(type="d")
+  )%>%
+  group_by(x)%>%summarise(predicted=mean(predicted),
+                          std.error=mean(std.error,na.rm=T),
+                          conf.low=mean(conf.low,na.rm=T),
+                          conf.high=mean(conf.high,na.rm=T))
+```
+
+```{r}
+figure4_a<-
+  # Medium presence ~ temp
+  ggplot()+
+  geom_ribbon(data=average_prediction_Medium_temp,
+              aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+              alpha=0.2)+
+  geom_line(data=average_prediction_Medium_temp,aes(x=x,y=1-predicted))+
+  geom_point(data=data_peat,aes(x=temp,y=Medium_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Probability of Medium presence")+
+  theme(plot.margin=margin(l = 5,t=10,b=10))
+figure4_b_1<-
+  # Medium abundance ~ nutr
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=nutrient,y=Medium_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Medium_temp,
+                                         type="fixed",terms=c("nutrient"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium_temp,
+                                          type="fixed",terms=c("nutrient"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Nutrient input")+ylab("Medium abundance")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10))
+figure4_b_2<-
+  # Medium abundance ~ fire
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=fire,y=Medium_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Medium_temp,
+                                       type="fixed",terms=c("fire"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium_temp,
+                                          type="fixed",terms=c("fire"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Fire")+ylab("Medium abundance")+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure4_b_3<-
+  # Medium abundance ~ dry
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=dry,y=Medium_prop),
+              position = position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=data.frame(ggemmeans(mod_abund_Medium_temp,
+                                       type="fixed",terms=c("dry"))),
+             aes(x=x,y=predicted),size=4,shape=16)+
+  geom_errorbar(data=data.frame(ggemmeans(mod_abund_Medium_temp,
+                                          type="fixed",terms=c("dry"))),
+                aes(x=x,y=predicted,ymin=conf.low,ymax=conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Dry period")+ylab("Medium abundance")+
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+figure4_c<-
+  # Balticum presence ~ temp
+  ggplot()+
+  geom_ribbon(data=average_prediction_Balticum_temp,
+              aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+              alpha=0.2)+
+  geom_line(data=average_prediction_Balticum_temp,aes(x=x,y=1-predicted))+
+  geom_point(data=data_peat,aes(x=temp,y=Balticum_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Probability of Balticum presence")+
+  theme(plot.margin=margin(l = 5,t=10,b=10))
+figure4_d_1<-
+  # Cuspidata presence ~ temp
+  ggplot()+
+  geom_ribbon(data=average_prediction_Cuspidata_temp,
+              aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+              alpha=0.2)+
+  geom_line(data=average_prediction_Cuspidata_temp,aes(x=x,y=1-predicted))+
+  geom_point(data=data_peat,aes(x=temp,y=Cuspidata_prop),
+             size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  my_theme()+xlab("Temperature")+ylab("Probability of Cuspidata presence")+
+  theme(plot.margin=margin(l = 5,t=10,b=10))
+figure4_d_2<-
+  # Cuspidata presence ~ nutr
+  ggplot()+
+  geom_jitter(data=data_peat,aes(x=nutrient,y=Cuspidata_prop),
+              position=position_jitter(0.1,0.01),
+              size=3,alpha=0.3,shape=16,color="darkturquoise")+
+  geom_point(data=average_prediction_Cuspidata_nutrient,
+             aes(x=x,y=1-predicted),size=4,shape=16)+
+  geom_errorbar(data=average_prediction_Cuspidata_nutrient,
+                aes(x=x,y=1-predicted,ymin=1-conf.low,ymax=1-conf.high),
+                width=0.2,size=0.5)+
+  my_theme()+xlab("Nutrient input")+ylab("Probability of Cuspidata presence")+
+  theme(plot.margin = margin(l=10,r = 5,t=10,b=10) )+
+  theme(axis.text.y = element_blank(),axis.title.y = element_blank(),
+        plot.margin = margin(r = 10, l = 5,t=10,b=10))
+```
+
+```{r}
+figure4_b<-ggarrange(figure4_b_1,figure4_b_2,figure4_b_3,nrow=1)
+figure4_d<-ggarrange(figure4_d_1,figure4_d_2,nrow=1)
+```
+
+```{r}
+figure4<-cowplot::plot_grid(
+  cowplot::plot_grid(figure4_a,figure4_b,ncol=2,labels=c("A)","B)"),
+            label_fontfamily="serif",rel_widths=c(0.3,0.7))+
+    theme(plot.background=element_rect(fill="white", color = NA)),
+  cowplot::plot_grid(figure4_c,figure4_d,ncol=2,labels=c("C)","D)"),
+            label_fontfamily="serif",rel_widths=c(0.35,0.65))+
+    theme(plot.background=element_rect(fill="white", color = NA)),
+  nrow=2)
+figure4
+ggsave(filename="output/figures/figure4.tiff",plot=figure4,
+       width=28,height=21,units="cm",dpi=300)
+ggsave(filename="output/figures/figure4.pdf",plot=figure4,
+       width=28,height=21,units="cm",dpi=300)
+```
+
+## Figure 5: interactions
+
+```{r}
+figure5<-cowplot::plot_grid(plot_sphagnum_int,plot_Erica_int,
+                            plot_Erio_int,ncol=3,
+                            labels=c("A)","B)","C)"),label_fontfamily="serif")
+figure5
+ggsave(filename="output/figures/figure5.tiff",plot=figure5,
+       width=35,height=12,units="cm",dpi=300)
+ggsave(filename="output/figures/figure5.pdf",plot=figure5,
+       width=35,height=12,units="cm",dpi=300)
+```
+
+# R session info
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
